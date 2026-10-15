@@ -1,0 +1,40 @@
+[vmm 448.171] xdomain ctx=3: cmd 1 size 20
+[vmm 448.171] xdomain ctx=3: INIT query_ring=6 channel_ring=7 channel=1
+[vmm 448.171] xdomain ctx=3: connected to /var/folders/h_/rs_ss_cs333742_927b_6dx00000gn/T/cocoa-way/wayland-1
+[vmm 448.171] xdomain ctx=3: cmd 3 size 16
+[vmm 448.280] xdomain ctx=3: cmd 4 size 364
+[vmm 448.280] xdomain ctx=3: cmd 4 size 364
+[vmm 448.291] xdomain ctx=3: RECEIVE 640 bytes, 0 fds
+[vmm 448.291] xdomain ctx=3: cmd 3 size 16
+[vmm 448.291] xdomain ctx=3: cmd 4 size 520
+[vmm 448.308] xdomain ctx=3: RECEIVE 96 bytes, 0 fds
+[vmm 448.308] xdomain ctx=3: cmd 3 size 16
+[vmm 448.499] xdomain ctx=6: cmd 1 size 20
+[vmm 448.499] xdomain ctx=6: INIT query_ring=10 channel_ring=11 channel=1
+[vmm 448.499] xdomain ctx=6: connected to /var/folders/h_/rs_ss_cs333742_927b_6dx00000gn/T/cocoa-way/wayland-1
+[vmm 448.499] xdomain ctx=6: cmd 3 size 16
+[vmm 448.517] xdomain ctx=6: cmd 4 size 364
+[vmm 448.524] xdomain ctx=6: RECEIVE 616 bytes, 0 fds
+[vmm 448.525] xdomain ctx=6: cmd 3 size 16
+[vmm 448.525] xdomain ctx=6: cmd 4 size 520
+[vmm 448.525] xdomain ctx=6: cmd 4 size 364
+[vmm 448.541] xdomain ctx=6: RECEIVE 120 bytes, 0 fds
+[vmm 448.541] xdomain ctx=6: cmd 3 size 16
+[vmm 448.544] xdomain ctx=8: cmd 1 size 20
+[vmm 448.544] xdomain ctx=8: INIT query_ring=12 channel_ring=13 channel=1
+[vmm 448.544] xdomain ctx=8: connected to /var/folders/h_/rs_ss_cs333742_927b_6dx00000gn/T/cocoa-way/wayland-1
+[vmm 448.544] xdomain ctx=8: cmd 3 size 16
+[vmm 448.561] xdomain ctx=8: cmd 4 size 364
+[vmm 448.574] xdomain ctx=8: RECEIVE 616 bytes, 0 fds
+[vmm 448.575] xdomain ctx=8: cmd 3 size 16
+[vmm 448.575] xdomain ctx=8: cmd 4 size 520
+[vmm 448.575] xdomain ctx=8: cmd 4 size 364
+[vmm 448.591] xdomain ctx=8: RECEIVE 120 bytes, 0 fds
+[vmm 448.591] xdomain ctx=8: cmd 3 size 16
+[vmm 448.598] xdomain ctx=3: cmd 4 size 592
+[vmm 448.599] xdomain ctx=3: cmd 4 size 396
+[vmm 448.608] xdomain ctx=3: RECEIVE 2664 bytes, 0 fds
+[vmm 448.608] xdomain ctx=3: cmd 3 size 16
+[vmm 448.609] xdomain ctx=3: cmd 4 size 364
+[vmm 448.624] xdomain ctx=3: RECEIVE 24 bytes, 0 fds
+[vmm 448.625] xdomain ctx=3: cmd 3 size 16

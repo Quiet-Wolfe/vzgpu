@@ -32,6 +32,28 @@ lanes) into host-visible memory, `vkQueueWaitIdle`s, maps and checks every value
 `evidence/2026-10-15-venus-compute/`. Not distinguished: whether those fences were
 held until `write_context_fence` or had already signalled at submit.
 
+**2026-10-15 — Wayland passthrough: window appears, but tears (not done).**
+Cross-domain context (capset 5, `crossdomain.m`, ported from rutabaga_gfx whose macOS
+backend is a stub) + stock sommelier `--virtgpu-channel` (built from ChromiumOS source;
+Fedora's `cros-sommelier` is only a wrapper) + Cocoa-Way 2.0.3: guest `vkcube` (Venus)
+opens a native macOS window at ~55 commits/s. Window buffers are POSIX shm mapped into the
+guest and passed to the compositor as the same fd. Evidence:
+`evidence/2026-10-15-wayland-window/`.
+
+Open defects:
+- **Tearing / stale frames.** sommelier allocates one output buffer per window and reuses
+  it as soon as Cocoa-Way sends `wl_buffer.release`, which Cocoa-Way does with each frame
+  callback (~17 ms after commit) while it apparently still reads the shm afterwards
+  (`sommelier-host-protocol-excerpt.txt`: same `wl_buffer#36` every frame). Protocol-legal
+  on the guest side; the early release is the compositor's.
+- **VMM abort on Venus context destroy** after `vkcube` exits:
+  `venus_context_destroy` → `util_hash_table_remove` → free of an unallocated pointer, in the
+  Homebrew (slp) virglrenderer. vulkaninfo / compute contexts destroy cleanly.
+
+The guest's `virtio_gpu` module is rebuilt with `guest/virtio-gpu-blob-roundup.patch`
+(`verify_blob()` rounds sizes up to `blob_alignment` instead of `EINVAL`), so userspace
+needs no alignment patches; `guest/wl-run` starts sommelier and runs a client.
+
 ### Findings
 
 - **Blob alignment needs Mesa ≥ 26.2.4.** VZ maps host memory at 16 KiB granularity,

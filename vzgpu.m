@@ -17,10 +17,12 @@
 #include <sys/uio.h>
 #include <virglrenderer.h>
 
-static BOOL gTrace;
+#import "crossdomain.h"
 
-static void vlog(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
-static void vlog(const char *fmt, ...) {
+BOOL gTrace;
+
+void vlog(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+void vlog(const char *fmt, ...) {
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
     char buf[2048];
@@ -107,21 +109,6 @@ static const char *cmdName(uint32_t t) {
 
 #pragma mark - resources and fences
 
-@interface GPUResource : NSObject
-@property uint32_t rid;
-@property BOOL virgl;              // owned by virglrenderer (blob / 3D) vs. our 2D stub
-@property uint64_t size;
-@property int64_t shmOffset;       // -1 when not mapped
-@property uint64_t mappedSize;
-@property BOOL unmapPending;       // UNMAP_BLOB sent to VZ, completion not yet seen
-@property BOOL unrefPending;       // guest unref'd it meanwhile; free after the unmap lands
-@property NSMutableArray<VZGuestMemoryMapping *> *backing;  // keeps iov memory alive
-@property struct iovec *iov;
-@property int iovCount;
-@end
-@implementation GPUResource
-- (void)dealloc { free(_iov); }
-@end
 
 @interface PendingFence : NSObject
 @property VZVirtioQueueElement *element;
@@ -138,7 +125,7 @@ static uint64_t ringKey(uint32_t flags, uint32_t ctx, uint8_t ring) {
 
 #pragma mark - device
 
-@interface GPUDevice : NSObject <VZCustomVirtioDeviceConfigurationDelegate, VZCustomVirtioDeviceDelegate>
+@interface GPUDevice : NSObject <VZCustomVirtioDeviceConfigurationDelegate, VZCustomVirtioDeviceDelegate, CrossDomainHost>
 @property (strong) VZCustomVirtioDevice *device;
 @property (strong) dispatch_queue_t queue;
 @end
@@ -150,6 +137,7 @@ static uint64_t ringKey(uint32_t flags, uint32_t ctx, uint8_t ring) {
     BOOL _virglReady;
     uint32_t _capVersion, _capSize;
     NSMutableDictionary<NSNumber *, NSNumber *> *_counts;
+    NSMutableDictionary<NSNumber *, CrossDomainContext *> *_xctx;
 }
 
 static void cbWriteFence(void *cookie, uint32_t fence) {
@@ -176,6 +164,7 @@ static struct virgl_renderer_callbacks gCallbacks = {
         _pending = [NSMutableArray new];
         _completed = [NSMutableDictionary new];
         _counts = [NSMutableDictionary new];
+        _xctx = [NSMutableDictionary new];
     }
     return self;
 }
@@ -194,9 +183,22 @@ static struct virgl_renderer_callbacks gCallbacks = {
     _virglReady = _capSize > 0;
 }
 
-static void freeVirgl(GPUResource *r) {
-    virgl_renderer_resource_detach_iov((int)r.rid, NULL, NULL);
-    virgl_renderer_resource_unref(r.rid);
+static void freeResource(GPUResource *r) {
+    if (r.virgl) {
+        virgl_renderer_resource_detach_iov((int)r.rid, NULL, NULL);
+        virgl_renderer_resource_unref(r.rid);
+    }
+    GPUResourceFreeHost(r);
+}
+
+#pragma mark CrossDomainHost
+
+- (GPUResource *)resourceForId:(uint32_t)rid {
+    return _res[@(rid)];
+}
+
+- (void)crossDomainFenceDone:(uint32_t)ctxId ring:(uint8_t)ring fence:(uint64_t)fenceId {
+    [self fenceDone:ringKey(FLAG_INFO_RING_IDX, ctxId, ring) fence:fenceId];
 }
 
 #pragma mark VZ delegate callbacks
@@ -300,8 +302,21 @@ static void putHdr(NSMutableData *resp, uint32_t type) {
         rh->fence_id = hdr->fence_id;
         rh->ctx_id = hdr->ctx_id;
         rh->ring_idx = hdr->ring_idx;
-        int r;
-        if (hdr->flags & FLAG_INFO_RING_IDX)
+        CrossDomainContext *x = _xctx[@(hdr->ctx_id)];
+        int r = 0;
+        if (x) {
+            // Ring 0 (query) and global fences: the command already ran synchronously.
+            // Ring 1 (channel): retire when the next compositor/pipe event is delivered.
+            if ((hdr->flags & FLAG_INFO_RING_IDX) && hdr->ring_idx == 1) {
+                PendingFence *p = [PendingFence new];
+                p.element = el;
+                p.ringKey = ringKey(hdr->flags, hdr->ctx_id, hdr->ring_idx);
+                p.fenceId = hdr->fence_id;
+                [_pending addObject:p];
+                hold = YES;
+                [x armChannelFence:hdr->fence_id];
+            }
+        } else if (hdr->flags & FLAG_INFO_RING_IDX)
             r = virgl_renderer_context_create_fence(hdr->ctx_id, VIRGL_RENDERER_FENCE_FLAG_MERGEABLE,
                                                     hdr->ring_idx, hdr->fence_id);
         else
@@ -309,7 +324,7 @@ static void putHdr(NSMutableData *resp, uint32_t type) {
         if (r) {
             vlog("create_fence(ctx=%u ring=%u id=%llu) = %d", hdr->ctx_id, hdr->ring_idx, hdr->fence_id, r);
             rh->type = RESP_ERR_UNSPEC;
-        } else {
+        } else if (!x) {
             uint64_t key = ringKey(hdr->flags, hdr->ctx_id, hdr->ring_idx);
             if (hdr->fence_id > _completed[@(key)].unsignedLongLongValue) {
                 PendingFence *p = [PendingFence new];
@@ -370,17 +385,25 @@ static void putHdr(NSMutableData *resp, uint32_t type) {
     }
     case CMD_GET_CAPSET_INFO: {
         NEED(32);
-        if (U32(24) != 0 || !_virglReady) {
+        uint32_t idx = U32(24);
+        if (idx > 1 || (idx == 0 && !_virglReady)) {
             putHdr(resp, RESP_ERR_INVALID_PARAMETER);
             return NO;
         }
         putHdr(resp, RESP_OK_CAPSET_INFO);
         uint32_t info[4] = {CAPSET_VENUS, _capVersion, _capSize, 0};
+        if (idx == 1)
+            info[0] = CAPSET_CROSS_DOMAIN, info[1] = 0, info[2] = (uint32_t)[CrossDomainContext capabilities].length;
         [resp appendBytes:info length:sizeof info];
         return NO;
     }
     case CMD_GET_CAPSET: {
         NEED(32);
+        if (U32(24) == CAPSET_CROSS_DOMAIN && U32(28) == 0) {
+            putHdr(resp, RESP_OK_CAPSET);
+            [resp appendData:[CrossDomainContext capabilities]];
+            return NO;
+        }
         if (U32(24) != CAPSET_VENUS || U32(28) > _capVersion) {
             putHdr(resp, RESP_ERR_INVALID_PARAMETER);
             return NO;
@@ -395,6 +418,12 @@ static void putHdr(NSMutableData *resp, uint32_t type) {
         NEED(96);
         uint32_t nlen = MIN(U32(24), 64u), init = U32(28);
         const char *name = (const char *)req + 32;
+        if ((init & 0xff) == CAPSET_CROSS_DOMAIN) {
+            _xctx[@(hdr->ctx_id)] = [[CrossDomainContext alloc] initWithHost:self ctx:hdr->ctx_id queue:_queue];
+            vlog("CTX_CREATE ctx=%u cross-domain name=%.*s", hdr->ctx_id, (int)nlen, name);
+            putHdr(resp, RESP_OK_NODATA);
+            return NO;
+        }
         int r = init ? virgl_renderer_context_create_with_flags(hdr->ctx_id, init, nlen, name)
                      : virgl_renderer_context_create(hdr->ctx_id, nlen, name);
         vlog("CTX_CREATE ctx=%u init=0x%x name=%.*s -> %d", hdr->ctx_id, init, (int)nlen, name, r);
@@ -402,14 +431,18 @@ static void putHdr(NSMutableData *resp, uint32_t type) {
         return NO;
     }
     case CMD_CTX_DESTROY:
-        virgl_renderer_context_destroy(hdr->ctx_id);
+        if (_xctx[@(hdr->ctx_id)]) {
+            [_xctx[@(hdr->ctx_id)] close];
+            [_xctx removeObjectForKey:@(hdr->ctx_id)];
+        } else
+            virgl_renderer_context_destroy(hdr->ctx_id);
         putHdr(resp, RESP_OK_NODATA);
         return NO;
     case CMD_CTX_ATTACH_RESOURCE:
     case CMD_CTX_DETACH_RESOURCE: {
         NEED(32);
         GPUResource *r = _res[@(U32(24))];
-        if (r.virgl) {
+        if (r.virgl && !_xctx[@(hdr->ctx_id)]) {
             if (hdr->type == CMD_CTX_ATTACH_RESOURCE)
                 virgl_renderer_ctx_attach_resource((int)hdr->ctx_id, (int)r.rid);
             else
@@ -423,6 +456,12 @@ static void putHdr(NSMutableData *resp, uint32_t type) {
         uint32_t size = U32(24), nin = U32(28);  // newer kernels put num_in_fences in the padding word
         size_t off = 32 + (size_t)nin * 8;
         NEED(off + size);
+        CrossDomainContext *x = _xctx[@(hdr->ctx_id)];
+        if (x) {
+            BOOL ok = [x submit:req + off length:size];
+            putHdr(resp, ok ? RESP_OK_NODATA : RESP_ERR_INVALID_PARAMETER);
+            return NO;
+        }
         void *cmd = malloc(size ? size : 4);
         memcpy(cmd, req + off, size);
         int r = virgl_renderer_submit_cmd(cmd, (int)hdr->ctx_id, (int)(size / 4));
@@ -450,6 +489,20 @@ static void putHdr(NSMutableData *resp, uint32_t type) {
         uint32_t rid = U32(24), mem = U32(28), bflags = U32(32), nr = U32(36);
         uint64_t blobId = U64(40), size = U64(48);
         NEED(56 + (size_t)nr * sizeof(struct mem_entry));
+        CrossDomainContext *x = _xctx[@(hdr->ctx_id)];
+        if (x && mem == BLOB_MEM_HOST3D) {
+            GPUResource *xr = [x createBlob:rid blobId:blobId size:size];
+            if (gTrace || !xr)
+                vlog("CREATE_BLOB rid=%u xdomain ctx=%u id=%llu size=0x%llx -> %s", rid, hdr->ctx_id, blobId, size,
+                     xr ? "ok" : "fail");
+            if (!xr) {
+                putHdr(resp, RESP_ERR_UNSPEC);
+                return NO;
+            }
+            _res[@(rid)] = xr;
+            putHdr(resp, RESP_OK_NODATA);
+            return NO;
+        }
         GPUResource *r = [GPUResource new];
         r.rid = rid;
         r.virgl = YES;
@@ -465,6 +518,14 @@ static void putHdr(NSMutableData *resp, uint32_t type) {
             .blob_id = blobId, .size = size, .iovecs = r.iov, .num_iovs = (uint32_t)r.iovCount,
         };
         int rc = virgl_renderer_resource_create_blob(&a);
+        if (rc && mem != BLOB_MEM_HOST3D) {
+            // A plain guest-memory blob (e.g. a cross-domain ring) that virglrenderer
+            // doesn't own: keep it as ours.
+            if (gTrace)
+                vlog("CREATE_BLOB rid=%u guest mem kept host-side (virgl rc=%d)", rid, rc);
+            r.virgl = NO;
+            rc = 0;
+        }
         if (gTrace || rc)
             vlog("CREATE_BLOB rid=%u mem=%u flags=0x%x id=%llu size=0x%llx nr=%u -> %d", rid, mem, bflags,
                  blobId, size, nr, rc);
@@ -540,8 +601,7 @@ static void putHdr(NSMutableData *resp, uint32_t type) {
         } else {
             if (r.shmOffset >= 0)
                 vlog("UNREF rid=%u while still mapped at 0x%llx (no unmap requested)", r.rid, r.shmOffset);
-            if (r.virgl)
-                freeVirgl(r);
+            freeResource(r);
         }
         putHdr(resp, RESP_OK_NODATA);
         return NO;
@@ -572,11 +632,14 @@ static void putHdr(NSMutableData *resp, uint32_t type) {
     VZVirtioSharedMemoryRegion *shm = [self hostVisible];
     uint32_t mapInfo = 0;
     uint64_t ptr = 0;
-    if (!r.virgl || !shm) {
+    if (!(r.virgl || r.xdomain) || !shm) {
         putHdr(resp, RESP_ERR_INVALID_RESOURCE_ID);
         return NO;
     }
-    if (virgl_renderer_resource_get_map_info(rid, &mapInfo) || virgl_renderer_resource_get_map_ptr(rid, &ptr) || !ptr) {
+    if (r.xdomain) {
+        ptr = (uint64_t)r.hostPtr;
+        mapInfo = VIRGL_RENDERER_MAP_CACHE_CACHED;
+    } else if (virgl_renderer_resource_get_map_info(rid, &mapInfo) || virgl_renderer_resource_get_map_ptr(rid, &ptr) || !ptr) {
         vlog("MAP_BLOB rid=%u: no map info/ptr", rid);
         putHdr(resp, RESP_ERR_UNSPEC);
         return NO;
@@ -628,7 +691,7 @@ static void putHdr(NSMutableData *resp, uint32_t type) {
             r.shmOffset = -1;
             r.unmapPending = NO;
             if (r.unrefPending)
-                freeVirgl(r);
+                freeResource(r);
             putHdr(out, error ? RESP_ERR_UNSPEC : RESP_OK_NODATA);
             struct ctrl_hdr hh = h;
             [self finish:el hdr:&hh resp:out];
@@ -741,7 +804,7 @@ int main(int argc, const char **argv) {
         g.virtioQueueCount = 2;
         g.optionalFeatures.subset0 = 1u << VIRTIO_GPU_F_VIRGL | 1u << VIRTIO_GPU_F_RESOURCE_BLOB |
                                      1u << VIRTIO_GPU_F_CONTEXT_INIT | 1u << VIRTIO_GPU_F_BLOB_ALIGNMENT;
-        uint32_t devcfg[5] = {0, 0, 1 /* scanouts */, 1 /* capsets */, (uint32_t)BLOB_ALIGN};
+        uint32_t devcfg[5] = {0, 0, 1 /* scanouts */, 2 /* capsets: Venus, cross-domain */, (uint32_t)BLOB_ALIGN};
         g.deviceSpecificConfiguration =
             [[VZVirtioDeviceSpecificConfiguration alloc] initWithConfigurationData:[NSData dataWithBytes:devcfg length:sizeof devcfg]];
         g.sharedMemoryRegions = @[ [[VZVirtioSharedMemoryRegionConfiguration alloc] initWithRegionID:SHM_ID_HOST_VISIBLE size:SHM_SIZE] ];

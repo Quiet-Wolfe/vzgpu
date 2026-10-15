@@ -1,0 +1,20 @@
+--- virtgpu_ioctl.c.orig	2026-10-15 15:25:52.129227357 +0000
++++ virtgpu_ioctl.c	2026-10-15 15:25:52.139187222 +0000
+@@ -496,9 +496,14 @@
+ 	params->blob_flags = rc_blob->blob_flags;
+ 	params->blob_hints = rc_blob->blob_hints;
+ 
+-	if (vgdev->has_blob_alignment &&
+-	    !IS_ALIGNED(params->size, vgdev->blob_alignment))
+-		return -EINVAL;
++	/*
++	 * Round up rather than reject: the alignment is a host constraint
++	 * (e.g. 16 KiB mapping granularity on Apple silicon) that userspace
++	 * written for 4 KiB pages does not know about. The object is simply
++	 * a little larger than requested.
++	 */
++	if (vgdev->has_blob_alignment)
++		params->size = ALIGN(params->size, vgdev->blob_alignment);
+ 
+ 	return 0;
+ }
