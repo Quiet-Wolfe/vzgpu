@@ -79,7 +79,7 @@ cmd_install() {
     while [ $# -gt 0 ]; do case "$1" in -D|--distribution) d=$2; shift 2 ;; *) die "install: unknown option $1" ;; esac; done
     IFS='|' read -r d url sums kargs < <(distro_info "$d")
     local dir="$ROOT/distros/$d"
-    [ -f "$dir/disk.img" ] && die "$d is already installed ($dir)"
+    [ -f "$dir/.installed" ] && die "$d is already installed ($dir)"
     [ -x "$TOOL" ] || die "build the tools first (missing $TOOL)"
     local kimg=${VZGPU_KERNEL_IMAGE:-$REPO/build/kernel/Image}
     [ -f "$kimg" ] || die "no kernel image at $kimg (kernel/build-kernel.sh)"
@@ -87,6 +87,7 @@ cmd_install() {
     cp "$kimg" "$ROOT/kernel/Image"
 
     local xz="$ROOT/cache/${url##*/}"
+    if [ ! -f "$dir/disk.img" ]; then  # else resume: a previous install got past unpacking
     say "Downloading $d (${url##*/})"
     curl -fL --progress-bar -C - -o "$xz" "$url" || die "download failed"
     local want; want=$(curl -fsSL "$sums" | sed -n "s/^SHA256 (${url##*/}) = //p")
@@ -97,15 +98,17 @@ cmd_install() {
     "$TOOL" unxz "$xz" "$dir/disk.img.part" && mv "$dir/disk.img.part" "$dir/disk.img"
     # A roomy sparse disk; the guest grows its root partition into it on first boot.
     dd if=/dev/zero of="$dir/disk.img" bs=1 count=0 seek="${VZGPU_DISK_SIZE:-64g}" 2>/dev/null
+    fi
 
     local partuuid; read -r partuuid _ < <("$TOOL" rootpart "$dir/disk.img")
     ln -sf ../../../kernel/Image "$dir/kernel/Image"
-    echo "console=hvc0 root=PARTUUID=$partuuid $kargs rw cloud-init=disabled systemd.firstboot=off systemd.mask=systemd-growfs-root.service systemd.mask=systemd-repart.service systemd.debug_shell=hvc0 systemd.mask=serial-getty@hvc0.service" > "$dir/kernel/cmdline"
+    echo "console=hvc0 root=PARTUUID=$partuuid $kargs rw cloud-init=disabled systemd.firstboot=off systemd.mask=systemd-firstboot.service systemd.mask=systemd-growfs-root.service systemd.mask=systemd-repart.service systemd.debug_shell=hvc0 systemd.mask=serial-getty@hvc0.service" > "$dir/kernel/cmdline"
     [ -f "$dir/ssh/id_ed25519" ] || ssh-keygen -q -t ed25519 -N '' -C "vzgpu-$d" -f "$dir/ssh/id_ed25519"
 
     # The guest's first boot runs share/guest/install-guest.sh for this user.
     rm -rf "$ROOT/share/guest"; cp -R "$REPO/guest" "$ROOT/share/guest"
     id -un > "$ROOT/share/user"
+    readlink /etc/localtime | sed 's|.*/zoneinfo/||' > "$ROOT/share/timezone"
     echo "$d" > "$ROOT/default"
 
     say "First boot (installs the guest services)"
@@ -115,6 +118,7 @@ cmd_install() {
         sleep 1
     done
     gssh "$d" root test -f /var/lib/vzgpu/installed || die "first-boot setup did not finish: vzgpu shell, then journalctl -u vzgpu-firstboot"
+    touch "$dir/.installed"
     say "$d is ready. Try: vzgpu run gnome-calculator"
 }
 

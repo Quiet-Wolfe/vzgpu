@@ -169,3 +169,33 @@ reported id, and free pending timeline fences on destroy.
   (fullscreen loop); held keys are now released on resign-key and fullscreen transitions.
 - Open: apps with no `.desktop` file show the generic blank icon instead of the letter
   placeholder (the drawingHandler image isn't picked up by the Dock).
+
+## One-command install (2026-10-15)
+
+```
+tools/vzgpu install -D Fedora      # ~5 min: 550 MB download, unpack, 20 s first boot
+tools/vzgpu shell sudo dnf install -y gnome-calculator
+tools/vzgpu run gnome-calculator   # opens as a macOS app with its own Dock icon
+```
+
+Verified end to end on 2026-10-15 from a stock `Fedora-Cloud-Base-AmazonEC2-45_Beta-1.3`
+image: no Homebrew, no cloud-init, no edits to the image before boot.
+
+- **Kernel** (`kernel/`): our `7.2.11-vzgpu`, Fedora's config reduced with `localyesconfig`
+  to `lsmod.txt` and everything built in (virtio incl. the blob round-up patch, virtiofs,
+  containers, netfilter, WireGuard, common filesystems): no modules, no initramfs, one kernel
+  for every distro (like WSL). Cross-compiles on x86 Fedora in 3.5 min. Root is
+  `PARTUUID=`; `systemd-growfs-root`/`repart` are masked because without an initramfs btrfs
+  reports `/dev/root` (and `rootflags=device=` panics: no /dev yet).
+- **First boot**: the VMM passes `guest/units/vzgpu-firstboot.service` as a
+  `systemd.extra-unit.*` credential (systemd >= 256). It mounts the share and runs
+  `guest/install-guest.sh <mac user>`: Mesa, sommelier (prebuilt) as a lingering user
+  service, Wayland env, share mount, path-triggered app export, user + sudo + SSH key,
+  root partition/filesystem growth, the Mac's timezone. `systemd-firstboot` must be masked:
+  the cloud image prompts on hvc0 for a root password even with `systemd.firstboot=off`.
+- **CLI** (`tools/vzgpu`, helper `tools/vzgpu-tool.m`): downloads, checks Fedora's SHA-256,
+  unpacks .xz with Apple's Compression framework (byte-identical to Python lzma), sparse
+  64 GB disk, root PARTUUID from GPT/MBR, SSH key, vzcomp LaunchAgent
+  (`dev.vzgpu.vzcomp`). `install` resumes after unpacking if the first boot fails.
+- Not yet: other distros, more than one guest at a time (fixed MAC), packaging the
+  binaries (the CLI uses this checkout's `build/`), a downloadable kernel release.

@@ -19,6 +19,10 @@ install -m 644 "$HERE/units/sommelier.service" /etc/systemd/user/
 install -D -m 644 "$HERE/units/50-vzgpu.conf" /etc/environment.d/50-vzgpu.conf
 install -m 644 "$HERE/units/vzgpu.sh" /etc/profile.d/vzgpu.sh
 
+# Same timezone as the Mac (the installer writes it next to this script's share).
+tz=$(cat "$HERE/../timezone" 2>/dev/null || true)
+[ -n "$tz" ] && timedatectl set-timezone "$tz" 2>/dev/null || true
+
 if ! id "$USERNAME" >/dev/null 2>&1; then
     useradd -m -G wheel,render,video "$USERNAME"
     passwd -d "$USERNAME" >/dev/null
