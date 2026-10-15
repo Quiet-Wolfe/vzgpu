@@ -237,7 +237,8 @@ bundle's. The app's own connection always arrives before its short-lived helper 
 a claimed connection that closes without a window re-execs the launcher (same pid) to claim
 again. Re-opening a running app is handled by LaunchServices (same bundle); apps started
 elsewhere leave `$TMPDIR/vzcomp/apps/<id>.pid` so the launcher activates them instead.
-Launch to window: 1.4 s with the VM running.
+Launch to window: 1.4 s with the VM running. Verified by Jayden: header drag works, and a
+launcher pinned in the Dock relaunches into that same single tile.
 
 Found on the way:
 - **Local Network privacy.** A new (ad-hoc) app bundle can't reach the VM's 192.168.65.x
