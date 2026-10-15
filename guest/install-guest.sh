@@ -10,7 +10,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 # Venus needs Mesa >= 26.2.4 (reads VIRTGPU_PARAM_BLOB_ALIGNMENT); sommelier's runtime libs.
 dnf install -y -q mesa-vulkan-drivers vulkan-loader mesa-libgbm libdrm pixman libxkbcommon \
     libwayland-client libwayland-server libxcb cloud-utils-growpart xorg-x11-server-Xwayland \
-    xrdb xsettingsd adwaita-cursor-theme dejavu-sans-mono-fonts
+    xrdb xsettingsd xsetroot adwaita-cursor-theme dejavu-sans-mono-fonts
 dnf upgrade -y -q 'mesa-*' || true
 
 install -m 755 "$HERE/payload/sommelier" "$HERE/wl-run" "$HERE/x11-run" "$HERE/vz-x11-session" \

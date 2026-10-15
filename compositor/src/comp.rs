@@ -104,6 +104,10 @@ pub struct App {
     grab_popups: Vec<ObjectId>,          // popups holding a grab, innermost last
     focused: Option<u64>,
     cursor_surface: Option<WlSurface>,
+    /// The pointer is over one of our windows. Clients may only set the cursor then
+    /// (wl_pointer.set_cursor after leave is stale); otherwise a late change from an X11 app
+    /// stayed on screen over other apps' windows while ours was frontmost.
+    pointer_inside: bool,
     regular: bool,
 }
 
@@ -187,6 +191,7 @@ impl App {
             grab_popups: Vec::new(),
             focused: None,
             cursor_surface: None,
+            pointer_inside: false,
             regular: false,
         }
     }
@@ -344,6 +349,9 @@ impl App {
     }
 
     fn commit_cursor(&mut self, surface: &WlSurface) {
+        if !self.pointer_inside {
+            return;
+        }
         let (buffer, scale, callbacks, hotspot) = with_states(surface, |states| {
             let mut guard = states.cached_state.get::<SurfaceAttributes>();
             let attrs = guard.current();
@@ -667,6 +675,7 @@ impl App {
         let time = InputTime::from_millis(ev.time_ms);
         match ev.kind {
             mac::EV_POINTER_MOTION => {
+                self.pointer_inside = true;
                 self.pointer_to(ev.window, ev.x, ev.y, time);
                 self.seat.get_pointer().unwrap().frame(self);
             }
@@ -714,6 +723,8 @@ impl App {
                 pointer.frame(self);
             }
             mac::EV_POINTER_LEAVE => {
+                self.pointer_inside = false;
+                unsafe { mac::vz_cursor_set_named(cstr("default").as_ptr()) };
                 let pointer = self.seat.get_pointer().unwrap();
                 let event = MotionEvent { location: (0.0, 0.0).into(), serial: SERIAL_COUNTER.next_serial(), time };
                 pointer.motion(self, None, &event);
@@ -1040,6 +1051,9 @@ impl SeatHandler for App {
     }
 
     fn cursor_image(&mut self, _seat: &Seat<Self>, image: CursorImageStatus) {
+        if !self.pointer_inside {
+            return;
+        }
         match image {
             CursorImageStatus::Hidden => {
                 self.cursor_surface = None;

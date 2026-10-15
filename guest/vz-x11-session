@@ -4,6 +4,9 @@
 xrdb -merge /etc/vzgpu/Xresources 2>/dev/null
 command -v xsettingsd >/dev/null && xsettingsd -c /etc/vzgpu/xsettingsd.conf >/dev/null 2>&1 &
 export XCURSOR_THEME=Adwaita XCURSOR_SIZE=48
+# Xwayland's root window cursor comes from the old cursor font (16 px, 8 pt on a Retina Mac)
+# and shows wherever an app sets none: replace it with the themed one at Retina size.
+command -v xsetroot >/dev/null && xsetroot -cursor_name left_ptr
 # Steam's own UI scaling (it ignores Xft.dpi).
 export STEAM_FORCE_DESKTOPUI_SCALING=2
 exec "$@"

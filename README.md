@@ -324,5 +324,17 @@ Dynamically linked x86 programs outside containers still need x86 libraries in t
   Mono) and XSETTINGS via xsettingsd (GTK window scale 2) into each Xwayland, and sets
   `STEAM_FORCE_DESKTOPUI_SCALING=2`. Cursor-font glyphs (xterm's I-beam) become themed cursors at
   24 pt instead of an 8-pt 16-px glyph. Verified on screen: crisp xterm text, normal cursor.
+- **Cursor over other apps:** with an X11 app frontmost, the cursor over *other* apps'
+  windows was a tiny arrow. Two bugs: vzcomp applied cursor changes after the pointer had left
+  its windows (Wayland allows set_cursor only while the pointer is on the client's surface;
+  macOS keeps the frontmost app's cursor), and Xwayland's root cursor is the 16-px cursor-font
+  arrow. vzcomp now ignores cursor changes while the pointer is outside, and resets to the
+  arrow on leave; vz-x11-session runs `xsetroot -cursor_name left_ptr` (themed, Retina size).
+  Verified: I-beam over xterm, full-size arrow over other apps while XTerm is frontmost.
+- Open: the guest kernel logs `WARNING … slow_avc_audit` floods (SELinux class 425 beyond the
+  kernel's class map), e.g. from mandb after package installs. Not fatal, needs a look.
+- Open: on 2026-10-15 the VM process vanished during a package install with no VZ stop
+  callback, crash report or log entry, while /Applications/vzgpu.app was being replaced
+  under it. Stop the guest before replacing the app until this is understood.
 - Open: i386 *containers* fail (`exec … No such file or directory`): FEX resolves the
   container's dynamic loader inside Fedora's x86 rootfs instead of the image.
