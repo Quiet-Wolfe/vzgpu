@@ -1,0 +1,21 @@
+kernel 7.1.13-402.asahi.fc45.aarch64+16k, page size 16384
+total 540
+drwxr-xr-x 4 root root     128 Oct 10 14:42 .
+-rwxr-xr-x 1 root root 1726424 Oct 10 14:42 rosetta
+-rwxr-xr-x 1 root root  393224 Oct 10 14:42 rosettad
+enabled
+interpreter /mnt/rosetta/rosetta
+flags: OCF
+rosetta error: unable to mmap ELF: 22
+ /root/rosetta-test.sh: line 12:  1267 Trace/breakpoint trap      (core dumped) /root/x86/usr/bin/busybox uname -m
+busybox uname rc=133
+rosetta error: unable to mmap ELF: 22
+ /root/rosetta-test.sh: line 13:  1274 Trace/breakpoint trap      (core dumped) /root/x86/usr/bin/busybox sh -c 'echo hello from x86_64 busybox; i=0; while [ $i -lt 100000 ]; do i=$((i+1)); done; echo loop=$i'
+busybox sh rc=133
+--- dmesg
+[    1.882599] [drm] Host memory window: 0x200000000 +0x200000000
+[    1.882600] [drm] features: +virgl -edid +resource_blob +host_visible
+[    1.882601] [drm] features: +context_init
+[    1.900467] [drm] Initialized virtio_gpu 0.1.0 for 0000:00:09.0 on minor 0
+[    1.900971] virtio-pci 0000:00:09.0: [drm] fb0: virtio_gpudrmfb frame buffer device
+[    5.632461] virtiofs virtio3: discovered new tag: rosetta

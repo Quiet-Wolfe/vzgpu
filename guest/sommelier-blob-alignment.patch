@@ -1,0 +1,55 @@
+--- virtgpu_channel.cc.orig	2026-10-15 14:34:22.153226388 +0000
++++ virtgpu_channel.cc	2026-10-15 14:34:22.158021356 +0000
+@@ -31,6 +31,18 @@
+ // for now)
+ #define CAPSET_CROSS_DOMAIN 5
+ 
++// Blob sizes must be multiples of the device blob alignment when the device
++// offers VIRTIO_GPU_F_BLOB_ALIGNMENT (e.g. 16 KiB on Apple-silicon hosts); the
++// kernel rejects anything else with EINVAL. Read it once in init().
++#ifndef VIRTGPU_PARAM_BLOB_ALIGNMENT
++#define VIRTGPU_PARAM_BLOB_ALIGNMENT 9
++#endif
++static uint64_t blob_alignment = 0;
++static uint64_t align_blob_size(uint64_t size) {
++  uint64_t a = blob_alignment ? blob_alignment : (uint64_t)getpagesize();
++  return (size + a - 1) & ~(a - 1);
++}
++
+ // Constants taken from pipe_loader_drm.c in Mesa
+ #define DRM_NUM_NODES 63
+ 
+@@ -187,6 +199,15 @@
+     }
+   }
+ 
++  {
++    uint64_t value = 0;
++    struct drm_virtgpu_getparam align_param = {};
++    align_param.param = VIRTGPU_PARAM_BLOB_ALIGNMENT;
++    align_param.value = (uint64_t)(uintptr_t)&value;
++    if (drmIoctl(virtgpu_, DRM_IOCTL_VIRTGPU_GETPARAM, &align_param) == 0 &&
++        value && !(value & (value - 1)))
++      blob_alignment = value;
++  }
+   args.cap_set_id = CAPSET_CROSS_DOMAIN;
+   args.size = sizeof(struct CrossDomainCapabilities);
+   args.addr = (uint64_t)&cross_domain_caps;
+@@ -223,7 +244,7 @@
+   struct drm_virtgpu_resource_create_blob drm_rc_blob = {};
+   struct drm_virtgpu_map map = {};
+ 
+-  drm_rc_blob.size = PAGE_SIZE;
++  drm_rc_blob.size = align_blob_size(PAGE_SIZE);
+   drm_rc_blob.blob_mem = VIRTGPU_BLOB_MEM_GUEST;
+   drm_rc_blob.blob_flags = VIRTGPU_BLOB_FLAG_USE_MAPPABLE;
+ 
+@@ -651,7 +672,7 @@
+   int32_t ret;
+   struct drm_virtgpu_resource_create_blob drm_rc_blob = {};
+ 
+-  drm_rc_blob.size = size;
++  drm_rc_blob.size = align_blob_size(size);
+   drm_rc_blob.blob_mem = VIRTGPU_BLOB_MEM_HOST3D;
+   drm_rc_blob.blob_flags =
+       VIRTGPU_BLOB_FLAG_USE_MAPPABLE | VIRTGPU_BLOB_FLAG_USE_SHAREABLE;

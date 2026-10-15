@@ -51,6 +51,13 @@ held until `write_context_fence` or had already signalled at submit.
   128/1) up, VZ NAT forwards guest packets into `utun4` without translating the
   source (192.168.65.x), and the VPN drops them. DNS still works. Packet capture:
   SYNs on `bridge101` and `utun4`, nothing on `en0`, no replies.
+- **Rosetta needs a 4 KiB-page guest kernel.** Same guest, same static x86_64 busybox,
+  Rosetta via `VZLinuxRosettaDirectoryShare` (virtiofs tag `rosetta`): on Fedora's
+  7.2.0-61 (4 KiB) it runs; on Asahi's `kernel-16k` 7.1.13-402 (16 KiB) every x86_64
+  binary dies with `rosetta error: unable to mmap ELF: 22`. x86_64 ELF segments are
+  4 KiB-aligned. So 16 KiB guest pages are not an escape from blob alignment; fix the
+  size rounding in the guest's virtio_gpu instead. Evidence:
+  `evidence/2026-10-15-rosetta-page-size/`. (Fedora itself no longer builds kernel-16k.)
 - The Fedora 45 Beta Workstation raw image's fstab mounts `subvol=var`/`subvol=home`
   but those subvolumes are nested under `root`; the clone has those lines commented.
 - The hvc0 serial console stops accepting input after a while (VZ stops draining

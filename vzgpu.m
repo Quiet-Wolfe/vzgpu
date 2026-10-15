@@ -679,8 +679,10 @@ int main(int argc, const char **argv) {
                                                         " systemd.wants=sshd.service",
                                                        [pub base64EncodedStringWithOptions:0]];
 
-        VZLinuxBootLoader *boot = [[VZLinuxBootLoader alloc] initWithKernelURL:[dir URLByAppendingPathComponent:@"Image"]];
-        boot.initialRamdiskURL = [dir URLByAppendingPathComponent:@"initramfs.img"];
+        // VZGPU_KERNEL=<name> boots <vmdir>/<name>/{Image,initramfs.img} instead of the default pair.
+        NSURL *kdir = getenv("VZGPU_KERNEL") ? [dir URLByAppendingPathComponent:@(getenv("VZGPU_KERNEL"))] : dir;
+        VZLinuxBootLoader *boot = [[VZLinuxBootLoader alloc] initWithKernelURL:[kdir URLByAppendingPathComponent:@"Image"]];
+        boot.initialRamdiskURL = [kdir URLByAppendingPathComponent:@"initramfs.img"];
         boot.commandLine = cmdline;
 
         VZVirtualMachineConfiguration *cfg = [VZVirtualMachineConfiguration new];
@@ -704,6 +706,17 @@ int main(int argc, const char **argv) {
         net.MACAddress = [[VZMACAddress alloc] initWithString:@"02:76:7a:67:70:75"];  // tools/gssh finds the lease by this
         cfg.networkDevices = @[ net ];
         cfg.entropyDevices = @[ [[VZVirtioEntropyDeviceConfiguration alloc] init] ];
+
+        // Rosetta for Linux as virtiofs tag "rosetta" (mount -t virtiofs rosetta /mnt/rosetta).
+        if (VZLinuxRosettaDirectoryShare.availability == VZLinuxRosettaAvailabilityInstalled) {
+            VZLinuxRosettaDirectoryShare *rosetta = [[VZLinuxRosettaDirectoryShare alloc] initWithError:&err];
+            VZVirtioFileSystemDeviceConfiguration *fs = [[VZVirtioFileSystemDeviceConfiguration alloc] initWithTag:@"rosetta"];
+            fs.share = rosetta;
+            if (rosetta)
+                cfg.directorySharingDevices = @[ fs ];
+            else
+                vlog("rosetta share: %s", err.description.UTF8String);
+        }
 
         // Console: input from a FIFO (opened O_RDWR so it never sees EOF), output to a log.
         NSString *fifo = [run URLByAppendingPathComponent:@"in.fifo"].path;

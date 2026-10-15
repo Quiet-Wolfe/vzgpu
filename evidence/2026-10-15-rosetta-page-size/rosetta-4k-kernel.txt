@@ -1,0 +1,13 @@
+kernel 7.2.0-61.fc45.aarch64, page size 4096
+total 540
+drwxr-xr-x 4 root root     128 Oct 10 14:42 .
+-rwxr-xr-x 1 root root 1726424 Oct 10 14:42 rosetta
+-rwxr-xr-x 1 root root  393224 Oct 10 14:42 rosettad
+enabled
+interpreter /mnt/rosetta/rosetta
+flags: OCF
+x86_64
+busybox uname rc=0
+hello from x86_64 busybox
+loop=100000
+busybox sh rc=0
