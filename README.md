@@ -338,3 +338,14 @@ Dynamically linked x86 programs outside containers still need x86 libraries in t
   under it. Stop the guest before replacing the app until this is understood.
 - Open: i386 *containers* fail (`exec … No such file or directory`): FEX resolves the
   container's dynamic loader inside Fedora's x86 rootfs instead of the image.
+
+## Steam (in progress, 2026-10-15)
+
+`guest/steam/fetch-steam-arm64.py` assembles Valve's native ARM64 client from the
+`steam_client_linuxarm64` manifest (35 packages, ~1 GB, SHA-256 checked, 3.4 GB unpacked).
+`steam.sh` hardcodes the 32-bit x86 client; the native one is `steamrtarm64/steam` (with a
+native `steamwebhelper`; Fedora only lacks `ibus-libs`). It needs `~/.steam/steam` and
+`~/.steam/root` → `~/.local/share/Steam` (steam.sh normally makes them). Run with
+`x11-run --id steam ~/.local/share/Steam/steamrtarm64/steam`: it starts and self-updates
+(a ~584 MB update was downloading). No window seen yet. Note: Steam uploads crash minidumps
+to Valve on its own.
