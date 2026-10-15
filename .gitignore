@@ -9,3 +9,4 @@ run/
 third_party/virglrenderer-*/
 third_party/virgl-prefix/
 third_party/vr.tgz
+third_party/sommelier-src/

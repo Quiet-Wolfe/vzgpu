@@ -748,30 +748,62 @@ static void present_window(uint64_t window) {
 #pragma mark cursor
 
 void vz_cursor_set_named(const char *cname) {
+    // CSS cursor names (wp_cursor_shape_v1 / cursor-icon) -> native macOS cursors. Names
+    // with no native counterpart (wait, progress, help) get the arrow: macOS shows its own
+    // busy indicator, and apps wanting something else send a cursor image instead.
     NSString *n = @(cname ?: "default");
+    static NSDictionary<NSString *, NSArray *> *frame;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        frame = @{
+            @"n-resize" : @[ @(NSCursorFrameResizePositionTop), @(NSCursorFrameResizeDirectionsAll) ],
+            @"s-resize" : @[ @(NSCursorFrameResizePositionBottom), @(NSCursorFrameResizeDirectionsAll) ],
+            @"e-resize" : @[ @(NSCursorFrameResizePositionRight), @(NSCursorFrameResizeDirectionsAll) ],
+            @"w-resize" : @[ @(NSCursorFrameResizePositionLeft), @(NSCursorFrameResizeDirectionsAll) ],
+            @"ne-resize" : @[ @(NSCursorFrameResizePositionTopRight), @(NSCursorFrameResizeDirectionsAll) ],
+            @"nw-resize" : @[ @(NSCursorFrameResizePositionTopLeft), @(NSCursorFrameResizeDirectionsAll) ],
+            @"se-resize" : @[ @(NSCursorFrameResizePositionBottomRight), @(NSCursorFrameResizeDirectionsAll) ],
+            @"sw-resize" : @[ @(NSCursorFrameResizePositionBottomLeft), @(NSCursorFrameResizeDirectionsAll) ],
+            @"nesw-resize" : @[ @(NSCursorFrameResizePositionTopRight), @(NSCursorFrameResizeDirectionsAll) ],
+            @"nwse-resize" : @[ @(NSCursorFrameResizePositionTopLeft), @(NSCursorFrameResizeDirectionsAll) ],
+            @"ew-resize" : @[ @(NSCursorFrameResizePositionRight), @(NSCursorFrameResizeDirectionsAll) ],
+            @"ns-resize" : @[ @(NSCursorFrameResizePositionBottom), @(NSCursorFrameResizeDirectionsAll) ],
+        };
+    });
     NSCursor *c = NSCursor.arrowCursor;
-    if ([n isEqual:@"text"] || [n isEqual:@"vertical-text"])
+    NSArray *f = frame[n];
+    if (f)
+        c = [NSCursor frameResizeCursorFromPosition:[f[0] integerValue] inDirections:[f[1] integerValue]];
+    else if ([n isEqual:@"text"])
         c = NSCursor.IBeamCursor;
+    else if ([n isEqual:@"vertical-text"])
+        c = NSCursor.IBeamCursorForVerticalLayout;
     else if ([n isEqual:@"pointer"])
         c = NSCursor.pointingHandCursor;
+    else if ([n isEqual:@"context-menu"])
+        c = NSCursor.contextualMenuCursor;
     else if ([n isEqual:@"grab"])
         c = NSCursor.openHandCursor;
-    else if ([n isEqual:@"grabbing"] || [n isEqual:@"move"] || [n isEqual:@"all-scroll"])
+    else if ([n isEqual:@"grabbing"] || [n isEqual:@"move"] || [n isEqual:@"all-scroll"] || [n isEqual:@"all-resize"])
         c = NSCursor.closedHandCursor;
     else if ([n isEqual:@"crosshair"] || [n isEqual:@"cell"])
         c = NSCursor.crosshairCursor;
     else if ([n isEqual:@"not-allowed"] || [n isEqual:@"no-drop"])
         c = NSCursor.operationNotAllowedCursor;
-    else if ([n isEqual:@"copy"])
+    else if ([n isEqual:@"copy"] || [n isEqual:@"dnd-ask"])
         c = NSCursor.dragCopyCursor;
     else if ([n isEqual:@"alias"])
         c = NSCursor.dragLinkCursor;
-    else if ([n hasSuffix:@"ew-resize"] || [n isEqual:@"col-resize"] || [n isEqual:@"e-resize"] ||
-             [n isEqual:@"w-resize"])
-        c = NSCursor.resizeLeftRightCursor;
-    else if ([n hasSuffix:@"ns-resize"] || [n isEqual:@"row-resize"] || [n isEqual:@"n-resize"] ||
-             [n isEqual:@"s-resize"])
-        c = NSCursor.resizeUpDownCursor;
+    else if ([n isEqual:@"col-resize"])
+        c = NSCursor.columnResizeCursor;
+    else if ([n isEqual:@"row-resize"])
+        c = NSCursor.rowResizeCursor;
+    else if ([n isEqual:@"zoom-in"])
+        c = NSCursor.zoomInCursor;
+    else if ([n isEqual:@"zoom-out"])
+        c = NSCursor.zoomOutCursor;
+    if (getenv("VZCOMP_DEBUG"))
+        fprintf(stderr, "[vzcomp %d] cursor shape %s\n", getpid(), n.UTF8String);
     if (g_cursor_hidden) {
         [NSCursor unhide];
         g_cursor_hidden = NO;
