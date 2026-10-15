@@ -1,3 +1,4 @@
+#include <dlfcn.h>
 // macOS side of vzcomp. See mac.h.
 //
 // Each Wayland surface is a CALayer whose contents is an IOSurface. On every commit
@@ -901,8 +902,29 @@ void vz_init(vz_event_cb cb, void *ctx) {
     [NSApp finishLaunching];
 }
 
+// Every app process runs from the same bundle, so AppKit would title the menu bar, Dock
+// tooltip and Cmd-Tab with the bundle's name. LaunchServices' per-process display name
+// overrides that (private; resolved at runtime so a missing symbol only loses the name).
+static void set_ls_display_name(NSString *name) {
+    typedef CFTypeRef (*GetASN)(void);
+    typedef OSStatus (*SetItem)(int, CFTypeRef, CFStringRef, CFStringRef, CFDictionaryRef *);
+    void *ls = dlopen("/System/Library/Frameworks/CoreServices.framework/CoreServices", RTLD_LAZY);
+    GetASN get_asn = ls ? (GetASN)dlsym(ls, "_LSGetCurrentApplicationASN") : NULL;
+    SetItem set_item = ls ? (SetItem)dlsym(ls, "_LSSetApplicationInformationItem") : NULL;
+    CFStringRef *key = ls ? (CFStringRef *)dlsym(ls, "_kLSDisplayNameKey") : NULL;
+    if (!get_asn || !set_item || !key) {
+        fprintf(stderr, "[vzcomp] LaunchServices display-name API not found\n");
+        return;
+    }
+    CFTypeRef asn = get_asn();
+    OSStatus st = asn ? set_item(-2, asn, *key, (__bridge CFStringRef)name, NULL) : -1;
+    if (st)
+        fprintf(stderr, "[vzcomp] set display name: %d\n", (int)st);
+}
+
 void vz_app_become_regular(const char *name) {
     NSString *n = @(name ?: "Linux App");
+    set_ls_display_name(n);
     build_menu(n);
     if (NSApp.activationPolicy != NSApplicationActivationPolicyRegular) {
         [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
@@ -936,11 +958,31 @@ static NSImage *placeholder_icon(NSString *label) {
 
 void vz_app_set_icon(const void *data, size_t len, const char *label) {
     NSImage *img = nil;
-    if (data && len)
-        img = [[NSImage alloc] initWithData:[NSData dataWithBytes:data length:len]];
+    if (data && len) {
+        NSImage *src = [[NSImage alloc] initWithData:[NSData dataWithBytes:data length:len]];
+        if (src.isValid && src.size.width > 0 && src.size.height > 0) {
+            // Linux icons fill their canvas; macOS app icons sit in the inner 824 of a 1024
+            // grid. Without the margin, a Linux app looks oversized next to native ones.
+            img = [NSImage imageWithSize:NSMakeSize(1024, 1024)
+                                 flipped:NO
+                          drawingHandler:^BOOL(NSRect r) {
+                              [src drawInRect:NSInsetRect(r, 100, 100)
+                                     fromRect:NSZeroRect
+                                    operation:NSCompositingOperationSourceOver
+                                     fraction:1];
+                              return YES;
+                          }];
+        }
+    }
+    fprintf(stderr, "[vzcomp] icon: %zu bytes -> %s\n", len, img ? "decoded" : "placeholder");
     if (!img)
         img = placeholder_icon(@(label ?: ""));
     NSApp.applicationIconImage = img;
+    // The Dock creates the tile asynchronously after the activation-policy change and
+    // takes the bundle's icon then, so set it again once the tile exists.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 300 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+        NSApp.applicationIconImage = img;
+    });
 }
 
 void vz_main_screen(double *width, double *height, double *scale, double *refresh_hz) {

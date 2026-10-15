@@ -427,11 +427,15 @@ impl App {
             return;
         }
         self.regular = true;
-        let name = app_name(app_id, title);
+        let id = app_id.map(desktop_id);
+        let exported = id.and_then(find_exported_app);
+        let name = exported.as_ref().and_then(|e| e.name.clone()).unwrap_or_else(|| app_name(id, title));
+        let icon = exported.as_ref().and_then(|e| e.icon.clone()).unwrap_or_default();
+        log!("app {id:?} -> name {name:?}, icon {} bytes", icon.len());
         let n = cstr(&name);
         unsafe {
             mac::vz_app_become_regular(n.as_ptr());
-            mac::vz_app_set_icon(std::ptr::null(), 0, n.as_ptr());
+            mac::vz_app_set_icon(icon.as_ptr() as *const _, icon.len(), n.as_ptr());
         }
     }
 
@@ -772,6 +776,41 @@ mod tests {
         assert!(!resize_caught_up(Some(1.into()), Some(u32::MAX.into())));
         assert!(resize_caught_up(Some(u32::MAX.into()), Some(1.into())));
     }
+}
+
+/// sommelier namespaces every app_id ("org.chromium.guest_os.termina.wayland.org.gnome.Calculator");
+/// the guest's desktop id is what follows.
+fn desktop_id(app_id: &str) -> &str {
+    app_id.strip_prefix("org.chromium.guest_os.termina.wayland.").unwrap_or(app_id)
+}
+
+struct ExportedApp {
+    name: Option<String>,
+    icon: Option<Vec<u8>>,
+}
+
+/// Name and icon the guest published with vz-export-apps into the VMM's "vzgpu" share
+/// (~/Library/Application Support/vzgpu/share/apps/<desktop-id>/{name,icon.svg|icon.png}).
+fn find_exported_app(id: &str) -> Option<ExportedApp> {
+    let home = std::env::var_os("HOME")?;
+    let apps = std::path::Path::new(&home).join("Library/Application Support/vzgpu/share/apps");
+    let dir = if apps.join(id).is_dir() {
+        apps.join(id)
+    } else {
+        // app_ids don't always match the .desktop name: try case-insensitive, then the last
+        // dotted component (app_id "gnome-calculator" vs org.gnome.Calculator.desktop).
+        let lower = id.to_lowercase();
+        let last = |s: &str| s.rsplit('.').next().unwrap_or(s).to_lowercase();
+        let entries: Vec<String> = std::fs::read_dir(&apps).ok()?
+            .filter_map(|e| e.ok()?.file_name().into_string().ok()).collect();
+        let hit = entries.iter().find(|e| e.to_lowercase() == lower)
+            .or_else(|| entries.iter().find(|e| last(e) == last(&lower)))?;
+        apps.join(hit)
+    };
+    let name = std::fs::read_to_string(dir.join("name")).ok()
+        .map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let icon = std::fs::read(dir.join("icon.svg")).or_else(|_| std::fs::read(dir.join("icon.png"))).ok();
+    Some(ExportedApp { name, icon })
 }
 
 /// "org.gnome.Calculator" -> "Calculator"; falls back to the title.
