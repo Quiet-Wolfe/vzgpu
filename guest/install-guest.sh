@@ -9,16 +9,16 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 
 # Venus needs Mesa >= 26.2.4 (reads VIRTGPU_PARAM_BLOB_ALIGNMENT); sommelier's runtime libs.
 dnf install -y -q mesa-vulkan-drivers vulkan-loader mesa-libgbm libdrm pixman libxkbcommon \
-    libwayland-client libwayland-server libxcb cloud-utils-growpart
+    libwayland-client libwayland-server libxcb cloud-utils-growpart xorg-x11-server-Xwayland
 dnf upgrade -y -q 'mesa-*' || true
 
-install -m 755 "$HERE/payload/sommelier" "$HERE/wl-run" "$HERE/vz-export-apps" /usr/local/bin/
+install -m 755 "$HERE/payload/sommelier" "$HERE/wl-run" "$HERE/x11-run" "$HERE/vz-export-apps" /usr/local/bin/
 install -m 644 "$HERE/units/mnt-vzgpu.mount" "$HERE/units/vz-export-apps.service" \
     "$HERE/units/vz-export-apps.path" "$HERE/units/mnt-rosetta.mount" \
     "$HERE/units/vzgpu-rosetta.service" /etc/systemd/system/
 # Rosetta, not QEMU, runs x86-64 binaries (vzgpu-rosetta.service registers it after the mount).
 mkdir -p /etc/binfmt.d && : > /etc/binfmt.d/qemu-x86_64-static.conf
-install -m 644 "$HERE/units/sommelier.service" /etc/systemd/user/
+install -m 644 "$HERE/units/sommelier.service" "$HERE/units/sommelier-x.service" /etc/systemd/user/
 install -D -m 644 "$HERE/units/50-vzgpu.conf" /etc/environment.d/50-vzgpu.conf
 install -m 644 "$HERE/units/vzgpu.sh" /etc/profile.d/vzgpu.sh
 
@@ -57,6 +57,6 @@ systemctl daemon-reload
 systemctl enable --now mnt-vzgpu.mount vz-export-apps.path
 systemctl enable --now mnt-rosetta.mount vzgpu-rosetta.service || echo "vzgpu: Rosetta not available" >&2
 systemctl start vz-export-apps.service || true
-systemctl --global enable sommelier.service
+systemctl --global enable sommelier.service sommelier-x.service
 loginctl enable-linger "$USERNAME"   # start the user manager (and sommelier) at boot
 echo "vzgpu guest ready for $USERNAME"

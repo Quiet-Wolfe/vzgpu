@@ -1,0 +1,11 @@
+#!/bin/sh
+# x11-run [--id APP-ID] <cmd...> — run an X11 app as its own macOS app: its own sommelier and
+# Xwayland, so the Mac sees one Wayland connection (one Dock tile, one name) per X11 app.
+# Without --id, the app id comes from the window's WM_CLASS (matched to its .desktop file).
+id=
+[ "$1" = --id ] && { id=$2; shift 2; }
+[ $# -gt 0 ] || { echo "usage: x11-run [--id APP-ID] <cmd...>" >&2; exit 2; }
+export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+# Exits when the app does (sommelier's default without --no-exit-with-child).
+exec env SOMMELIER_FULL_COPY=1 sommelier -X --virtgpu-channel --xwayland-path=/usr/bin/Xwayland \
+    ${id:+--application-id="$id"} "$@"

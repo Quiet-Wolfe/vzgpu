@@ -89,3 +89,33 @@ index 2fc478f4..71a0d1f5 100644
      pub fn with_data(name: &CStr, data: &[u8]) -> Result<Self, std::io::Error> {
          use rand::{Rng, distr::Alphanumeric};
          use rustix::{
+diff --git a/src/wayland/shell/xdg/mod.rs b/src/wayland/shell/xdg/mod.rs
+index f9d78627..b9ccd28e 100644
+--- a/src/wayland/shell/xdg/mod.rs
++++ b/src/wayland/shell/xdg/mod.rs
+@@ -1589,7 +1589,7 @@ impl ToplevelSurface {
+     ) {
+         let _span = trace_span!("xdg-toplevel pre-commit", surface = %surface.id()).entered();
+ 
+-        let error = compositor::with_states(surface, |states| {
++        let error: Option<(xdg_surface::Error, &str)> = compositor::with_states(surface, |states| {
+             let mut role = states
+                 .data_map
+                 .get::<XdgToplevelSurfaceData>()
+@@ -1615,11 +1615,12 @@ impl ToplevelSurface {
+             let got_unmapped = had_buffer_before && !has_buffer;
+ 
+             if has_buffer {
++                // vzgpu: sommelier's X11 windows attach their first buffer before acking the
++                // initial configure (ChromeOS's compositor allows it). Accept the buffer instead
++                // of killing the client; the surface simply has no acked state yet.
+                 let Some(last_acked) = role.last_acked.clone() else {
+-                    return Some((
+-                        xdg_surface::Error::UnconfiguredBuffer,
+-                        "must ack the initial configure before attaching buffer",
+-                    ));
++                    pending.last_acked = None;
++                    return None;
+                 };
+ 
+                 // The surface remains, or became mapped, track the last acked state.

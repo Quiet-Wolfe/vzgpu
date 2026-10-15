@@ -70,7 +70,7 @@ gssh() {
     local d=$1 user=$2; shift 2
     [ -S "$ROOT/distros/$d/run/ssh.sock" ] || return 255
     local opts=(); while IFS= read -r o; do opts+=("$o"); done < <(ssh_opts "$d")
-    ssh -q "${opts[@]}" -o BatchMode=yes "$user@vzgpu-$d" "$@"
+    ssh -q "${opts[@]}" -o BatchMode=yes "$user@vzgpu-$d" "$@" </dev/null  # never eat the caller's stdin
 }
 
 # install_agent <label> <plist body>: write ~/Library/LaunchAgents/<label>.plist and (re)load it
@@ -263,7 +263,9 @@ cmd_launch() {
 cmd_shell() {
     local d; d=$(default_distro); ensure_vm "$d"
     local opts=(); while IFS= read -r o; do opts+=("$o"); done < <(ssh_opts "$d")
-    ssh "${opts[@]}" -t "$(id -un)@vzgpu-$d" "$@"
+    # A terminal only when there is one: piped input (tar | vzgpu shell ...) must pass through.
+    local tty=-T; [ -t 0 ] && tty=-t
+    ssh "${opts[@]}" $tty "$(id -un)@vzgpu-$d" "$@"
 }
 
 cmd_stop() {

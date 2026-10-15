@@ -4,6 +4,9 @@
 #   sommelier-full-copy.patch     copy whole frames into the host buffer (damage-only copy garbles GTK4)
 #   sommelier-cursor-shape.patch  wp_cursor_shape_v1 pass-through, so apps' standard cursors
 #                                 become native macOS cursors in vzcomp
+#   sommelier-x11.patch           X11 (Xwayland) windows outside ChromeOS: app id as
+#                                 xdg_toplevel.set_app_id (not only aura-shell) and title bars
+#                                 via xdg-decoration (server-side unless Motif hints say no)
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 W=${W:-$HOME/sommelier-build}
@@ -13,6 +16,7 @@ rm -rf "$W" && mkdir -p "$W" && cd "$W"
 curl -sSfL 'https://chromium.googlesource.com/chromiumos/platform2/+archive/refs/heads/main/vm_tools/sommelier.tar.gz' | tar xz
 (cd compositor && patch -s -p0 < "$HERE/sommelier-full-copy.patch")
 patch -s -p1 < "$HERE/sommelier-cursor-shape.patch"
+patch -s -p1 < "$HERE/sommelier-x11.patch"
 meson setup build -Dwith_tests=false --buildtype=release >/dev/null
 ninja -C build >/dev/null
 strip -o sommelier build/sommelier

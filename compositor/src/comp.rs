@@ -795,10 +795,20 @@ mod tests {
     }
 }
 
-/// sommelier namespaces every app_id ("org.chromium.guest_os.termina.wayland.org.gnome.Calculator");
+/// sommelier namespaces Wayland app_ids ("org.chromium.guest_os.termina.wayland.org.gnome.Calculator");
 /// the guest's desktop id is what follows.
+/// X11 windows (sommelier -X) without a forced --application-id arrive as
+/// "org.chromium.<vm>.wmclass.<WM_CLASS>"; the WM_CLASS is what matches a .desktop file.
 fn desktop_id(app_id: &str) -> &str {
-    app_id.strip_prefix("org.chromium.guest_os.termina.wayland.").unwrap_or(app_id)
+    if let Some(id) = app_id.strip_prefix("org.chromium.guest_os.termina.wayland.") {
+        return id;
+    }
+    if let Some(rest) = app_id.strip_prefix("org.chromium.") {
+        if let Some((_, class)) = rest.split_once(".wmclass.") {
+            return class;
+        }
+    }
+    app_id
 }
 
 struct ExportedApp {

@@ -1,0 +1,330 @@
+diff --git a/meson.build b/meson.build
+index 16c7c84..15425ab 100644
+--- a/meson.build
++++ b/meson.build
+@@ -55,6 +55,7 @@ wl_protocols = [
+   'protocol/text-input-extension-unstable-v1.xml',
+   'protocol/text-input-x11-unstable-v1.xml',
+   'protocol/viewporter.xml',
++  'protocol/xdg-decoration-unstable-v1.xml',
+   'protocol/xdg-output-unstable-v1.xml',
+   'protocol/xdg-shell.xml',
+ ]
+diff --git a/protocol/xdg-decoration-unstable-v1.xml b/protocol/xdg-decoration-unstable-v1.xml
+new file mode 100644
+index 0000000..023589a
+--- /dev/null
++++ b/protocol/xdg-decoration-unstable-v1.xml
+@@ -0,0 +1,176 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<protocol name="xdg_decoration_unstable_v1">
++  <copyright>
++    Copyright © 2018 Simon Ser
++
++    Permission is hereby granted, free of charge, to any person obtaining a
++    copy of this software and associated documentation files (the "Software"),
++    to deal in the Software without restriction, including without limitation
++    the rights to use, copy, modify, merge, publish, distribute, sublicense,
++    and/or sell copies of the Software, and to permit persons to whom the
++    Software is furnished to do so, subject to the following conditions:
++
++    The above copyright notice and this permission notice (including the next
++    paragraph) shall be included in all copies or substantial portions of the
++    Software.
++
++    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
++    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
++    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++    DEALINGS IN THE SOFTWARE.
++  </copyright>
++
++  <interface name="zxdg_decoration_manager_v1" version="2">
++    <description summary="window decoration manager">
++      This interface allows a compositor to announce support for server-side
++      decorations.
++
++      A window decoration is a set of window controls as deemed appropriate by
++      the party managing them, such as user interface components used to move,
++      resize and change a window's state.
++
++      A client can use this protocol to request being decorated by a supporting
++      compositor.
++
++      If compositor and client do not negotiate the use of a server-side
++      decoration using this protocol, clients continue to self-decorate as they
++      see fit.
++
++      Warning! The protocol described in this file is experimental and
++      backward incompatible changes may be made. Backward compatible changes
++      may be added together with the corresponding interface version bump.
++      Backward incompatible changes are done by bumping the version number in
++      the protocol and interface names and resetting the interface version.
++      Once the protocol is to be declared stable, the 'z' prefix and the
++      version number in the protocol and interface names are removed and the
++      interface version number is reset.
++    </description>
++
++    <request name="destroy" type="destructor">
++      <description summary="destroy the decoration manager object">
++        Destroy the decoration manager. This doesn't destroy objects created
++        with the manager.
++      </description>
++    </request>
++
++    <request name="get_toplevel_decoration">
++      <description summary="create a new toplevel decoration object">
++        Create a new decoration object associated with the given toplevel.
++
++        For objects of version 1, creating an xdg_toplevel_decoration from an
++        xdg_toplevel which has a buffer attached or committed is a client
++        error, and any attempts by a client to attach or manipulate a buffer
++        prior to the first xdg_toplevel_decoration.configure event must also be
++        treated as errors.
++
++        For objects of version 2 or newer, creating an xdg_toplevel_decoration
++        from an xdg_toplevel which has a buffer attached or committed is
++        allowed. The initial decoration mode of the surface if a buffer is
++        already attached depends on whether a xdg_toplevel_decoration object
++        has been associated with the surface or not prior to this request.
++
++        If an xdg_toplevel_decoration was associated with the surface, then
++        destroyed without a surface commit, the previous decoration mode is
++        retained.
++
++        If no xdg_toplevel_decoration was associated with the surface prior to
++        this request, or if a surface commit has been performed after a previous
++        xdg_toplevel_decoration object associated with the surface was
++        destroyed, the decoration mode is assumed to be client-side.
++      </description>
++      <arg name="id" type="new_id" interface="zxdg_toplevel_decoration_v1"/>
++      <arg name="toplevel" type="object" interface="xdg_toplevel"/>
++    </request>
++  </interface>
++
++  <interface name="zxdg_toplevel_decoration_v1" version="2">
++    <description summary="decoration object for a toplevel surface">
++      The decoration object allows the compositor to toggle server-side window
++      decorations for a toplevel surface. The client can request to switch to
++      another mode.
++
++      The xdg_toplevel_decoration object must be destroyed before its
++      xdg_toplevel.
++    </description>
++
++    <enum name="error">
++      <entry name="unconfigured_buffer" value="0"
++        summary="xdg_toplevel has a buffer attached before configure"/>
++      <entry name="already_constructed" value="1"
++        summary="xdg_toplevel already has a decoration object"/>
++      <entry name="orphaned" value="2"
++        summary="xdg_toplevel destroyed before the decoration object"/>
++      <entry name="invalid_mode" value="3" summary="invalid mode"/>
++    </enum>
++
++    <request name="destroy" type="destructor">
++      <description summary="destroy the decoration object">
++        Switch back to a mode without any server-side decorations at the next
++        commit, unless a new xdg_toplevel_decoration is created for the surface
++        first.
++      </description>
++    </request>
++
++    <enum name="mode">
++      <description summary="window decoration modes">
++        These values describe window decoration modes.
++      </description>
++      <entry name="client_side" value="1"
++        summary="no server-side window decoration"/>
++      <entry name="server_side" value="2"
++        summary="server-side window decoration"/>
++    </enum>
++
++    <request name="set_mode">
++      <description summary="set the decoration mode">
++        Set the toplevel surface decoration mode. This informs the compositor
++        that the client prefers the provided decoration mode.
++
++        After requesting a decoration mode, the compositor will respond by
++        emitting an xdg_surface.configure event. The client should then update
++        its content, drawing it without decorations if the received mode is
++        server-side decorations. The client must also acknowledge the configure
++        when committing the new content (see xdg_surface.ack_configure).
++
++        The compositor can decide not to use the client's mode and enforce a
++        different mode instead.
++
++        Clients whose decoration mode depend on the xdg_toplevel state may send
++        a set_mode request in response to an xdg_surface.configure event and wait
++        for the next xdg_surface.configure event to prevent unwanted state.
++        Such clients are responsible for preventing configure loops and must
++        make sure not to send multiple successive set_mode requests with the
++        same decoration mode.
++
++        If an invalid mode is supplied by the client, the invalid_mode protocol
++        error is raised by the compositor.
++      </description>
++      <arg name="mode" type="uint" enum="mode" summary="the decoration mode"/>
++    </request>
++
++    <request name="unset_mode">
++      <description summary="unset the decoration mode">
++        Unset the toplevel surface decoration mode. This informs the compositor
++        that the client doesn't prefer a particular decoration mode.
++
++        This request has the same semantics as set_mode.
++      </description>
++    </request>
++
++    <event name="configure">
++      <description summary="notify a decoration mode change">
++        The configure event configures the effective decoration mode. The
++        configured state should not be applied immediately. Clients must send an
++        ack_configure in response to this event. See xdg_surface.configure and
++        xdg_surface.ack_configure for details.
++
++        A configure event can be sent at any time. The specified mode must be
++        obeyed by the client.
++      </description>
++      <arg name="mode" type="uint" enum="mode" summary="the decoration mode"/>
++    </event>
++  </interface>
++</protocol>
+diff --git a/sommelier-ctx.cc b/sommelier-ctx.cc
+index 6cdc047..9b2ef5d 100644
+--- a/sommelier-ctx.cc
++++ b/sommelier-ctx.cc
+@@ -133,6 +133,7 @@ void sl_context_init_default(struct sl_context* ctx) {
+   ctx->xdg_output_manager = nullptr;
+   ctx->fractional_scale_manager = nullptr;
+   ctx->cursor_shape_manager = nullptr;
++  ctx->xdg_decoration_manager = nullptr;
+ #ifdef GAMEPAD_SUPPORT
+   ctx->gaming_input_manager = nullptr;
+   ctx->gaming_seat = nullptr;
+diff --git a/sommelier-ctx.h b/sommelier-ctx.h
+index 1431ada..0d96313 100644
+--- a/sommelier-ctx.h
++++ b/sommelier-ctx.h
+@@ -109,6 +109,8 @@ struct sl_context {
+   struct sl_pointer_constraints* pointer_constraints;
+   struct sl_fractional_scale_manager* fractional_scale_manager;
+   struct sl_cursor_shape_manager* cursor_shape_manager;
++  // Host xdg-decoration, used for X11 windows only (title bars from the host).
++  struct zxdg_decoration_manager_v1* xdg_decoration_manager;
+   struct sl_idle_inhibit_manager* idle_inhibit_manager;
+   struct wl_list outputs;
+   struct wl_list seats;
+diff --git a/sommelier-window.cc b/sommelier-window.cc
+index 8915859..69a08cc 100644
+--- a/sommelier-window.cc
++++ b/sommelier-window.cc
+@@ -20,6 +20,7 @@
+ 
+ #include "aura-shell-client-protocol.h"  // NOLINT(build/include_directory)
+ #include "viewporter-client-protocol.h"  // NOLINT(build/include_directory)
++#include "xdg-decoration-unstable-v1-client-protocol.h"  // NOLINT(build/include_directory)
+ #include "xdg-shell-client-protocol.h"   // NOLINT(build/include_directory)
+ 
+ #ifdef QUIRKS_SUPPORT
+@@ -1064,11 +1065,17 @@ void sl_toplevel_send_window_bounds_to_host(struct sl_window* window) {
+ void sl_update_application_id(struct sl_context* ctx,
+                               struct sl_window* window) {
+   TRACE_EVENT("other", "sl_update_application_id");
+-  if (!window->aura_surface) {
++  // Non-ChromeOS compositors don't speak aura-shell: give them the same id as
++  // the standard xdg_toplevel app_id.
++  if (!window->aura_surface && !window->xdg_toplevel) {
+     return;
+   }
+   if (ctx->application_id) {
+-    zaura_surface_set_application_id(window->aura_surface, ctx->application_id);
++    if (window->aura_surface)
++      zaura_surface_set_application_id(window->aura_surface,
++                                       ctx->application_id);
++    if (window->xdg_toplevel)
++      xdg_toplevel_set_app_id(window->xdg_toplevel, ctx->application_id);
+     return;
+   }
+   // Don't set application id for X11 override redirect. This prevents
+@@ -1091,7 +1098,11 @@ void sl_update_application_id(struct sl_context* ctx,
+           sl_xasprintf(XID_APPLICATION_ID_FORMAT, ctx->vm_id, window->id);
+     }
+ 
+-    zaura_surface_set_application_id(window->aura_surface, application_id_str);
++    if (window->aura_surface)
++      zaura_surface_set_application_id(window->aura_surface,
++                                       application_id_str);
++    if (window->xdg_toplevel)
++      xdg_toplevel_set_app_id(window->xdg_toplevel, application_id_str);
+     free(application_id_str);
+   }
+ }
+@@ -1123,6 +1134,10 @@ void sl_window_update(struct sl_window* window) {
+       zaura_surface_destroy(window->aura_surface);
+       window->aura_surface = nullptr;
+     }
++    if (window->xdg_decoration) {  // must go before its toplevel
++      zxdg_toplevel_decoration_v1_destroy(window->xdg_decoration);
++      window->xdg_decoration = nullptr;
++    }
+     if (window->xdg_toplevel) {
+       xdg_toplevel_destroy(window->xdg_toplevel);
+       window->xdg_toplevel = nullptr;
+@@ -1261,6 +1276,19 @@ void sl_window_update(struct sl_window* window) {
+       window->xdg_toplevel = xdg_surface_get_toplevel(window->xdg_surface);
+       xdg_toplevel_add_listener(window->xdg_toplevel,
+                                 &sl_internal_xdg_toplevel_listener, window);
++      sl_update_application_id(ctx, window);
++    }
++    // X11 windows draw no frame of their own: ask a non-ChromeOS host for one
++    // (server-side decoration) unless the window's Motif hints say no title.
++    if (ctx->xwayland && ctx->xdg_decoration_manager && !ctx->aura_shell) {
++      if (!window->xdg_decoration)
++        window->xdg_decoration =
++            zxdg_decoration_manager_v1_get_toplevel_decoration(
++                ctx->xdg_decoration_manager, window->xdg_toplevel);
++      zxdg_toplevel_decoration_v1_set_mode(
++          window->xdg_decoration,
++          window->decorated ? ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE
++                            : ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE);
+     }
+ 
+     // Right now, aura_toplevel is only needed for windows positioned by the
+diff --git a/sommelier-window.h b/sommelier-window.h
+index 288a3fe..a0c7453 100644
+--- a/sommelier-window.h
++++ b/sommelier-window.h
+@@ -159,6 +159,7 @@ struct sl_window {
+ 
+   struct xdg_surface* xdg_surface = nullptr;
+   struct xdg_toplevel* xdg_toplevel = nullptr;
++  struct zxdg_toplevel_decoration_v1* xdg_decoration = nullptr;
+   struct xdg_popup* xdg_popup = nullptr;
+   struct zaura_surface* aura_surface = nullptr;
+   struct zaura_toplevel* aura_toplevel = nullptr;
+diff --git a/sommelier.cc b/sommelier.cc
+index 4af0877..a2d6619 100644
+--- a/sommelier.cc
++++ b/sommelier.cc
+@@ -65,6 +65,7 @@
+ #include "text-input-unstable-v1-client-protocol.h"  // NOLINT(build/include_directory)
+ #include "viewporter-client-protocol.h"  // NOLINT(build/include_directory)
+ #include "xdg-output-unstable-v1-client-protocol.h"  // NOLINT(build/include_directory)
++#include "xdg-decoration-unstable-v1-client-protocol.h"  // NOLINT(build/include_directory)
+ #include "xdg-shell-client-protocol.h"  // NOLINT(build/include_directory)
+ #include "xdg-shell-shim.h"             // NOLINT(build/include_directory)
+ 
+@@ -789,6 +790,10 @@ void sl_registry_handler(void* data,
+     ctx->fractional_scale_manager = fractional_scale_manager;
+     fractional_scale_manager->host_fractional_scale_manager_global =
+         sl_fractional_scale_manager_global_create(ctx);
++  } else if (strcmp(interface, "zxdg_decoration_manager_v1") == 0) {
++    ctx->xdg_decoration_manager =
++        static_cast<zxdg_decoration_manager_v1*>(wl_registry_bind(
++            registry, id, &zxdg_decoration_manager_v1_interface, 1));
+   } else if (strcmp(interface, "wp_cursor_shape_manager_v1") == 0) {
+     // Named cursors: the host compositor draws its own (native) cursor.
+     struct sl_cursor_shape_manager* cursor_shape_manager =
