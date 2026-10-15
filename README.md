@@ -147,3 +147,22 @@ The krunkit virglrenderer 0.10.4e (Homebrew `libkrun/krun` tap) has two bugs in
 Fix: a per-context fence mutex (not held across `vkr_renderer_submit_fence`, since ring 0
 retires synchronously inside it), a lock on the context list, retire by `fence_id <=`
 reported id, and free pending timeline fences on destroy.
+
+## Dock icons, app names, fullscreen Spaces (2026-10-15)
+
+- The VMM shares `~/Library/Application Support/vzgpu/share` as virtiofs tag `vzgpu`.
+  In the guest, `guest/vz-export-apps` (installed as `/usr/local/bin/vz-export-apps`)
+  writes `apps/<desktop-id>/{name,icon.svg|icon.png}` for every `.desktop` file (108 on F45).
+- vzcomp strips sommelier's `org.chromium.guest_os.termina.wayland.` app_id prefix and looks
+  the app up there (exact, case-insensitive, then last dotted component). Verified with GNOME
+  Calculator: its icon in the Dock and "Calculator" in the menu bar.
+- `NSApp.applicationIconImage` set right after the activation-policy change is lost (the Dock
+  makes the tile afterwards and uses the bundle icon); it is re-applied 300 ms later.
+- All app processes share one bundle, so the menu-bar/Cmd-Tab name is set per process with
+  LaunchServices' private `_LSSetApplicationInformationItem(_kLSDisplayNameKey)`.
+- Fullscreen: `weston-fullscreen -f` gets `windowDidEnterFullScreen` and a 1512x949
+  configure (the notched display below the camera housing) in its own Space. macOS 14+
+  cooperative activation means the user is not switched to that Space when the app was
+  launched from elsewhere; it shows up as a Dock tile / Mission Control Space.
+- Open: apps with no `.desktop` file show the generic blank icon instead of the
+  letter placeholder; the runtime fullscreen toggle (`f` in weston-fullscreen) is untested.

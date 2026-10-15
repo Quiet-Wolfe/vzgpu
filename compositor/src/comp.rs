@@ -626,6 +626,9 @@ impl App {
     }
 
     fn configure_size(&mut self, handle: u64, w: f64, h: f64, fullscreen: Option<bool>) {
+        if let Some(on) = fullscreen {
+            log!("window {handle} {} native fullscreen at {w}x{h}", if on { "entered" } else { "left" });
+        }
         if let Some(t) = self.toplevel_of(handle) {
             t.with_pending_state(|s| {
                 s.size = Some((w.round() as i32, h.round() as i32).into());
