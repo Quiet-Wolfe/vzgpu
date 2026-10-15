@@ -1,0 +1,15 @@
+# Rosetta for Linux, shared by the VMM (VZLinuxRosettaDirectoryShare, virtiofs tag "rosetta").
+[Unit]
+Description=Rosetta for Linux (from the Mac)
+
+[Mount]
+What=rosetta
+Where=/mnt/rosetta
+Type=virtiofs
+# virtiofs carries no SELinux labels: without one, containers (container_t) may not execute
+# Rosetta and every amd64 container dies with SIGSEGV. container_ro_file_t is the type Fedora
+# uses for read-only content shared into containers; host processes can execute it too.
+Options=ro,nofail,context=system_u:object_r:container_ro_file_t:s0
+
+[Install]
+WantedBy=multi-user.target

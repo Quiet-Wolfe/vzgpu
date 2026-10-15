@@ -14,7 +14,10 @@ dnf upgrade -y -q 'mesa-*' || true
 
 install -m 755 "$HERE/payload/sommelier" "$HERE/wl-run" "$HERE/vz-export-apps" /usr/local/bin/
 install -m 644 "$HERE/units/mnt-vzgpu.mount" "$HERE/units/vz-export-apps.service" \
-    "$HERE/units/vz-export-apps.path" /etc/systemd/system/
+    "$HERE/units/vz-export-apps.path" "$HERE/units/mnt-rosetta.mount" \
+    "$HERE/units/vzgpu-rosetta.service" /etc/systemd/system/
+# Rosetta, not QEMU, runs x86-64 binaries (vzgpu-rosetta.service registers it after the mount).
+mkdir -p /etc/binfmt.d && : > /etc/binfmt.d/qemu-x86_64-static.conf
 install -m 644 "$HERE/units/sommelier.service" /etc/systemd/user/
 install -D -m 644 "$HERE/units/50-vzgpu.conf" /etc/environment.d/50-vzgpu.conf
 install -m 644 "$HERE/units/vzgpu.sh" /etc/profile.d/vzgpu.sh
@@ -52,6 +55,7 @@ fi
 
 systemctl daemon-reload
 systemctl enable --now mnt-vzgpu.mount vz-export-apps.path
+systemctl enable --now mnt-rosetta.mount vzgpu-rosetta.service || echo "vzgpu: Rosetta not available" >&2
 systemctl start vz-export-apps.service || true
 systemctl --global enable sommelier.service
 loginctl enable-linger "$USERNAME"   # start the user manager (and sommelier) at boot
