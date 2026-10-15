@@ -1,0 +1,9 @@
+#!/bin/sh
+# vz-x11-session <cmd...> — run inside a fresh Xwayland (sommelier -X): load the Retina
+# settings (/etc/vzgpu/Xresources, XSETTINGS via xsettingsd), then exec the app.
+xrdb -merge /etc/vzgpu/Xresources 2>/dev/null
+command -v xsettingsd >/dev/null && xsettingsd -c /etc/vzgpu/xsettingsd.conf >/dev/null 2>&1 &
+export XCURSOR_THEME=Adwaita XCURSOR_SIZE=48
+# Steam's own UI scaling (it ignores Xft.dpi).
+export STEAM_FORCE_DESKTOPUI_SCALING=2
+exec "$@"

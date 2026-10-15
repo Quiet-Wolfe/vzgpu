@@ -7,5 +7,6 @@ id=
 [ $# -gt 0 ] || { echo "usage: x11-run [--id APP-ID] <cmd...>" >&2; exit 2; }
 export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
 # Exits when the app does (sommelier's default without --no-exit-with-child).
-exec env SOMMELIER_FULL_COPY=1 sommelier -X --virtgpu-channel --xwayland-path=/usr/bin/Xwayland \
-    ${id:+--application-id="$id"} "$@"
+# --scale=2: X11 renders at Retina resolution; vz-x11-session sets the matching DPI.
+exec env SOMMELIER_FULL_COPY=1 sommelier -X --scale=2 --virtgpu-channel --xwayland-path=/usr/bin/Xwayland \
+    ${id:+--application-id="$id"} vz-x11-session "$@"

@@ -318,5 +318,11 @@ Dynamically linked x86 programs outside containers still need x86 libraries in t
   `PartOf=systemd-binfmt.service`; empty `/etc/binfmt.d` overrides keep QEMU and FEX off x86-64
   and QEMU off i386. Verified: static i386 busybox under FEX (0.50 s loop vs Rosetta 0.33 s,
   QEMU 2.58 s); the handler set survives `systemctl try-restart systemd-binfmt`.
+- **Retina X11:** sommelier ran X at scale 1 (no aura-shell device scale), so X11 apps drew
+  1x and were pixel-doubled. Now `--scale=2` (Retina-resolution X) plus `vz-x11-session`, which
+  loads `/etc/vzgpu/Xresources` (Xft.dpi 192, Adwaita cursors at 48 px, xterm on DejaVu Sans
+  Mono) and XSETTINGS via xsettingsd (GTK window scale 2) into each Xwayland, and sets
+  `STEAM_FORCE_DESKTOPUI_SCALING=2`. Cursor-font glyphs (xterm's I-beam) become themed cursors at
+  24 pt instead of an 8-pt 16-px glyph. Verified on screen: crisp xterm text, normal cursor.
 - Open: i386 *containers* fail (`exec … No such file or directory`): FEX resolves the
   container's dynamic loader inside Fedora's x86 rootfs instead of the image.

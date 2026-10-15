@@ -1,0 +1,15 @@
+! X11 apps on a Retina Mac: sommelier runs Xwayland at full resolution (--scale=2), so tell
+! apps the real density. Loaded into every Xwayland by vz-x11-session.
+Xft.dpi: 192
+Xft.antialias: 1
+Xft.hinting: 1
+Xft.hintstyle: hintslight
+Xft.rgba: none
+! Themed cursors at Retina size (24 pt); libXcursor also swaps cursor-font glyphs (xterm's
+! I-beam) for themed ones.
+Xcursor.theme: Adwaita
+Xcursor.size: 48
+! xterm's default bitmap font doesn't scale; use a scalable one.
+XTerm*renderFont: true
+XTerm*faceName: DejaVu Sans Mono
+XTerm*faceSize: 11

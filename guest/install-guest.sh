@@ -9,10 +9,14 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 
 # Venus needs Mesa >= 26.2.4 (reads VIRTGPU_PARAM_BLOB_ALIGNMENT); sommelier's runtime libs.
 dnf install -y -q mesa-vulkan-drivers vulkan-loader mesa-libgbm libdrm pixman libxkbcommon \
-    libwayland-client libwayland-server libxcb cloud-utils-growpart xorg-x11-server-Xwayland
+    libwayland-client libwayland-server libxcb cloud-utils-growpart xorg-x11-server-Xwayland \
+    xrdb xsettingsd adwaita-cursor-theme dejavu-sans-mono-fonts
 dnf upgrade -y -q 'mesa-*' || true
 
-install -m 755 "$HERE/payload/sommelier" "$HERE/wl-run" "$HERE/x11-run" "$HERE/vz-export-apps" /usr/local/bin/
+install -m 755 "$HERE/payload/sommelier" "$HERE/wl-run" "$HERE/x11-run" "$HERE/vz-x11-session" \
+    "$HERE/vz-export-apps" /usr/local/bin/
+install -D -m 644 "$HERE/x11/Xresources" /etc/vzgpu/Xresources
+install -D -m 644 "$HERE/x11/xsettingsd.conf" /etc/vzgpu/xsettingsd.conf
 install -m 644 "$HERE/units/mnt-vzgpu.mount" "$HERE/units/vz-export-apps.service" \
     "$HERE/units/vz-export-apps.path" "$HERE/units/mnt-rosetta.mount" \
     "$HERE/units/vzgpu-rosetta.service" /etc/systemd/system/

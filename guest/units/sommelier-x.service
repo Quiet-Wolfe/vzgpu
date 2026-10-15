@@ -7,7 +7,7 @@ After=sommelier.service
 
 [Service]
 Environment=SOMMELIER_FULL_COPY=1
-ExecStart=/usr/local/bin/sommelier -X --virtgpu-channel --xwayland-path=/usr/bin/Xwayland --x-display=0 --no-exit-with-child /usr/bin/sleep infinity
+ExecStart=/usr/local/bin/sommelier -X --scale=2 --virtgpu-channel --xwayland-path=/usr/bin/Xwayland --x-display=0 --no-exit-with-child /usr/local/bin/vz-x11-session /usr/bin/sleep infinity
 Restart=on-failure
 RestartSec=1
 
