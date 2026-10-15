@@ -257,11 +257,12 @@ static NSString *waylandSocketPath(void) {
     const char *env = getenv("VZGPU_WAYLAND_SOCKET");
     if (env)
         return @(env);
-    const char *xdg = getenv("XDG_RUNTIME_DIR"), *disp = getenv("WAYLAND_DISPLAY");
-    if (xdg && disp)
-        return [NSString stringWithFormat:@"%s/%s", xdg, disp];
-    // Cocoa-Way's default.
-    return [[NSTemporaryDirectory() stringByAppendingPathComponent:@"cocoa-way/wayland-1"] stringByResolvingSymlinksInPath];
+    // vzcomp's default: the per-user temp dir, as confstr reports it (not $TMPDIR, which
+    // shells and sandboxes override); compositor/src/main.rs uses the same.
+    char dir[PATH_MAX];
+    if (confstr(_CS_DARWIN_USER_TEMP_DIR, dir, sizeof dir) == 0)
+        return [NSTemporaryDirectory() stringByAppendingPathComponent:@"vzcomp/wayland-0"];
+    return [@(dir) stringByAppendingPathComponent:@"vzcomp/wayland-0"];
 }
 
 - (BOOL)initChannel:(const uint8_t *)p length:(size_t)len {

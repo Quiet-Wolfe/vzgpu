@@ -251,3 +251,26 @@ Found on the way:
   without beginning"). vzcomp tracks the move itself, like interactive resize.
 - `vzgpu run` must detach the app from SSH (`setsid -f … </dev/null`) or the command never
   returns. `GDK_DEBUG=no-portals`: without a GNOME session GTK waited seconds for the portal.
+
+## Packaging: vzgpu.app (2026-10-15)
+
+`tools/package-app.sh` builds `build/vzgpu.app` (28 MB): `MacOS/` vzcomp (bundle executable,
+the broker), vzgpu-vm (VMM), vzgpu-tool, vzgpu (CLI); `Frameworks/` virglrenderer (patched),
+Vulkan loader, KosmicKrisp ICD, libepoxy, libxkbcommon, all `@rpath`; `Resources/` the ICD
+manifest, xkb data, the guest package. The script fails if any library path still points into
+Homebrew, the Vulkan SDK or the checkout. Run as `/Applications/vzgpu.app/Contents/MacOS/vzgpu`.
+
+Kernel: not bundled; `install` downloads `Image.xz` (14.7 MB, SHA-256 pinned in the CLI) from
+the GitHub release `kernel-7.2.11-vzgpu` (Quiet-Wolfe/vzgpu; not published yet: override with
+`VZGPU_KERNEL_URL`, or `VZGPU_KERNEL_IMAGE` for a local build).
+
+Verified 2026-10-15: fresh `install -D Fedora` from /Applications/vzgpu.app (2 min with the
+image cached); the broker, VMM and a launcher load only the bundle's libraries (lsof), and
+Calculator opens from /Applications/Fedora with its window in its own process.
+Found on the way:
+- The VMM's cross-domain socket default was still Cocoa-Way's (`cocoa-way/wayland-1`); only
+  `tools/run-vm` had been setting `VZGPU_WAYLAND_SOCKET`. Now defaults to vzcomp's socket.
+- launchd's global environment had a stale `VK_DRIVER_FILES` (SDK 1.4.350, the KosmicKrisp
+  that striped GTK frames), inherited by every Dock/Finder-launched app. Inside the bundle the
+  VMM always uses its own ICD; choose another with `VZGPU_VK_DRIVER_FILES`.
+- LaunchAgents are rewritten and reloaded when they point elsewhere (dev app -> vzgpu.app).

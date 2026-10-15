@@ -792,6 +792,17 @@ int main(int argc, const char **argv) {
             return 2;
         }
         setvbuf(stderr, NULL, _IOLBF, 0);
+        // Inside vzgpu.app: the bundled Vulkan ICD (KosmicKrisp), always, unless chosen with
+        // VZGPU_VK_DRIVER_FILES. A plain VK_DRIVER_FILES is ignored on purpose: one left in
+        // launchd's environment (launchctl setenv) once swapped in an older KosmicKrisp unnoticed.
+        NSString *icd = [NSBundle.mainBundle.resourcePath
+            stringByAppendingPathComponent:@"vulkan/icd.d/kosmickrisp_icd.json"];
+        if (getenv("VZGPU_VK_DRIVER_FILES"))
+            setenv("VK_DRIVER_FILES", getenv("VZGPU_VK_DRIVER_FILES"), 1);
+        else if ([NSFileManager.defaultManager fileExistsAtPath:icd])
+            setenv("VK_DRIVER_FILES", icd.fileSystemRepresentation, 1);
+        if (getenv("VK_DRIVER_FILES"))
+            vlog("Vulkan ICD: %s", getenv("VK_DRIVER_FILES"));
         gTrace = getenv("VZGPU_TRACE") != NULL;
         NSURL *dir = [NSURL fileURLWithPath:@(argv[1])];
         NSURL *run = [dir URLByAppendingPathComponent:@"run"];

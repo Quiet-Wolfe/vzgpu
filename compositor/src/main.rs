@@ -79,7 +79,30 @@ fn serve(socket: PathBuf) -> ! {
     std::process::exit(0);
 }
 
+/// xkbcommon's keymap data ships in vzgpu.app (Contents/Resources/xkb). Launcher bundles
+/// (/Applications/<distro>/<App>.app) find it through the CLI path they carry.
+fn use_bundled_xkb() {
+    if std::env::var_os("XKB_CONFIG_ROOT").is_some() {
+        return;
+    }
+    let Ok(exe) = std::env::current_exe() else { return };
+    let contents = exe.parent().and_then(|p| p.parent()).map(PathBuf::from);
+    let mut candidates = Vec::new();
+    if let Some(c) = &contents {
+        candidates.push(c.join("Resources/xkb"));
+        if let Ok(cli) = std::fs::read_to_string(c.join("Resources/vzgpu-cli")) {
+            if let Some(app_contents) = std::path::Path::new(cli.trim()).parent().and_then(|p| p.parent()) {
+                candidates.push(app_contents.join("Resources/xkb"));
+            }
+        }
+    }
+    if let Some(dir) = candidates.into_iter().find(|d| d.is_dir()) {
+        std::env::set_var("XKB_CONFIG_ROOT", dir);
+    }
+}
+
 fn main() {
+    use_bundled_xkb();
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
         Some("--client-fd") => {

@@ -8,17 +8,40 @@
 #   vzgpu stop                  shut the guest down
 #   vzgpu list                  installed distros
 #
+# Runs from vzgpu.app (Contents/MacOS/vzgpu; tools/package-app.sh) or, for development,
+# from a checkout (build/).
+#
 # Everything lives in ~/Library/Application Support/vzgpu:
 #   kernel/Image                our kernel (kernel/build-kernel.sh): one for every distro
 #   distros/<name>/             disk.img, kernel/{Image -> ../../../kernel/Image, cmdline}, ssh/
 #   share/                      virtiofs tag "vzgpu": guest package, user name, exported apps
 set -euo pipefail
-REPO=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+CLI=$(readlink -f "$0")
+HERE=$(dirname "$CLI")
 ROOT="$HOME/Library/Application Support/vzgpu"
-TOOL=$REPO/build/vzgpu-tool
-VZCOMP_APP=$REPO/build/VZGPU\ Debug.app
-VZCOMP_BIN=$VZCOMP_APP/Contents/MacOS/vzcomp
-MAC=02:76:7a:67:70:75   # the VMM's fixed MAC (one guest at a time for now)
+if [ -x "$HERE/vzgpu-vm" ] && [ -f "$HERE/../Info.plist" ]; then  # inside vzgpu.app
+    APP=$(cd "$HERE/../.." && pwd)
+    VMM=$HERE/vzgpu-vm
+    TOOL=$HERE/vzgpu-tool
+    VZCOMP_BIN=$HERE/vzcomp
+    GUEST=$APP/Contents/Resources/guest
+    FRAMEWORKS=$APP/Contents/Frameworks
+else                                                              # a checkout
+    REPO=$(cd "$HERE/.." && pwd)
+    VMM=$REPO/tools/run-vm   # tested Vulkan stack via the SDK + local virglrenderer
+    TOOL=$REPO/build/vzgpu-tool
+    VZCOMP_BIN=$REPO/build/VZGPU\ Debug.app/Contents/MacOS/vzcomp
+    GUEST=$REPO/guest
+    FRAMEWORKS=
+fi
+
+# Our kernel (kernel/build-kernel.sh), one for every distro. VZGPU_KERNEL_IMAGE=<file> uses a
+# local build instead; VZGPU_KERNEL_URL=<url> another download.
+KERNEL_VERSION=7.2.11-vzgpu
+KERNEL_URL=${VZGPU_KERNEL_URL:-https://github.com/Quiet-Wolfe/vzgpu/releases/download/kernel-$KERNEL_VERSION/Image.xz}
+KERNEL_SHA256=b25a2a7f9ff6f58d196b0579b23b7af688618b9b19c2d0e1474ac4afcf8a8141
+VM_PROCS='(vzgpu-vm|vzgpu-venus[^ ]*)'
+
 
 die() { echo "vzgpu: $*" >&2; exit 1; }
 say() { printf '\033[1m%s\033[0m\n' "$*"; }
@@ -34,7 +57,7 @@ distro_info() {
 }
 
 default_distro() { cat "$ROOT/default" 2>/dev/null || echo Fedora; }
-vm_running() { pgrep -f "vzgpu-venus.* $ROOT/distros/$1\$" >/dev/null; }
+vm_running() { pgrep -f "$VM_PROCS $ROOT/distros/$1\$" >/dev/null; }
 # SSH over the VMM's vsock relay (<vm>/run/ssh.sock -> guest sshd on vsock port 22), not TCP:
 # launcher apps would need Local Network permission for the VM's address, and the VPN can
 # break NAT TCP. The host name is only a label.
@@ -50,24 +73,29 @@ gssh() {
     ssh -q "${opts[@]}" -o BatchMode=yes "$user@vzgpu-$d" "$@"
 }
 
+# install_agent <label> <plist body>: write ~/Library/LaunchAgents/<label>.plist and (re)load it
+# if it is new or changed.
+install_agent() {
+    local label=$1 body=$2 plist=$HOME/Library/LaunchAgents/$1.plist
+    local new
+    new=$(printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' \
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+        "<plist version=\"1.0\"><dict><key>Label</key><string>$label</string>$body</dict></plist>")
+    if [ -f "$plist" ] && [ "$(cat "$plist")" = "$new" ] && launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1; then
+        return
+    fi
+    mkdir -p "$(dirname "$plist")" "$ROOT"
+    printf '%s\n' "$new" > "$plist"
+    launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+    launchctl bootstrap "gui/$(id -u)" "$plist"
+}
+
 ensure_vzcomp() {
-    ensure_sync_agent
-    pgrep -f 'MacOS/vzcomp$' >/dev/null && return
-    local plist=$HOME/Library/LaunchAgents/dev.vzgpu.vzcomp.plist
-    mkdir -p "$(dirname "$plist")"
-    cat > "$plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>Label</key><string>dev.vzgpu.vzcomp</string>
-  <key>ProgramArguments</key><array><string>$VZCOMP_APP/Contents/MacOS/vzcomp</string></array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>StandardErrorPath</key><string>$ROOT/vzcomp.log</string>
-</dict></plist>
-EOF
-    launchctl bootout gui/$(id -u)/dev.vzgpu.vzcomp 2>/dev/null || true
-    launchctl bootstrap gui/$(id -u) "$plist"
+    mkdir -p "$ROOT/share/apps"
+    install_agent dev.vzgpu.sync-apps \
+        "<key>ProgramArguments</key><array><string>$CLI</string><string>sync-apps</string></array><key>WatchPaths</key><array><string>$ROOT/share/apps</string></array><key>RunAtLoad</key><true/><key>StandardErrorPath</key><string>$ROOT/sync-apps.log</string>"
+    install_agent dev.vzgpu.vzcomp \
+        "<key>ProgramArguments</key><array><string>$VZCOMP_BIN</string></array><key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>StandardErrorPath</key><string>$ROOT/vzcomp.log</string>"
     for _ in $(seq 20); do pgrep -f 'MacOS/vzcomp$' >/dev/null && return; sleep 0.25; done
     die "vzcomp did not start (see $ROOT/vzcomp.log)"
 }
@@ -77,11 +105,26 @@ ensure_vm() {
     [ -d "$ROOT/distros/$d" ] || die "$d is not installed (vzgpu install -D $d)"
     ensure_vzcomp
     if ! vm_running "$d"; then
-        pgrep -f 'build/vzgpu-venus' >/dev/null && die "another guest is running (vzgpu stop)"
-        VZGPU_KERNEL=kernel nohup "$REPO/tools/run-vm" "$ROOT/distros/$d" >/dev/null 2>&1 &
+        pgrep -f "$VM_PROCS /" >/dev/null && die "another guest is running (vzgpu stop)"
+        mkdir -p "$ROOT/distros/$d/run"
+        VZGPU_KERNEL=kernel nohup "$VMM" "$ROOT/distros/$d" >/dev/null 2>"$ROOT/distros/$d/run/vmm.log" &
     fi
     for _ in $(seq 120); do gssh "$d" root true 2>/dev/null && return; sleep 1; done
     die "$d did not come up (log: $ROOT/distros/$d/run/console.log)"
+}
+
+install_kernel() {
+    if [ -n "${VZGPU_KERNEL_IMAGE:-}" ]; then
+        cp "$VZGPU_KERNEL_IMAGE" "$ROOT/kernel/Image"
+        return
+    fi
+    [ "$(cat "$ROOT/kernel/version" 2>/dev/null)" = "$KERNEL_VERSION" ] && [ -f "$ROOT/kernel/Image" ] && return
+    local xz="$ROOT/cache/Image-$KERNEL_VERSION.xz"
+    say "Downloading the vzgpu kernel ($KERNEL_VERSION)"
+    curl -fL --progress-bar -o "$xz" "$KERNEL_URL" || die "kernel download failed ($KERNEL_URL)"
+    [ "$(shasum -a 256 "$xz" | cut -d' ' -f1)" = "$KERNEL_SHA256" ] || { rm -f "$xz"; die "kernel checksum mismatch"; }
+    "$TOOL" unxz "$xz" "$ROOT/kernel/Image" 2>/dev/null
+    echo "$KERNEL_VERSION" > "$ROOT/kernel/version"
 }
 
 cmd_install() {
@@ -91,10 +134,8 @@ cmd_install() {
     local dir="$ROOT/distros/$d"
     [ -f "$dir/.installed" ] && die "$d is already installed ($dir)"
     [ -x "$TOOL" ] || die "build the tools first (missing $TOOL)"
-    local kimg=${VZGPU_KERNEL_IMAGE:-$REPO/build/kernel/Image}
-    [ -f "$kimg" ] || die "no kernel image at $kimg (kernel/build-kernel.sh)"
     mkdir -p "$ROOT/cache" "$ROOT/kernel" "$dir/kernel" "$dir/ssh" "$ROOT/share"
-    cp "$kimg" "$ROOT/kernel/Image"
+    install_kernel
 
     local xz="$ROOT/cache/${url##*/}"
     if [ ! -f "$dir/disk.img" ]; then  # else resume: a previous install got past unpacking
@@ -116,7 +157,7 @@ cmd_install() {
     [ -f "$dir/ssh/id_ed25519" ] || ssh-keygen -q -t ed25519 -N '' -C "vzgpu-$d" -f "$dir/ssh/id_ed25519"
 
     # The guest's first boot runs share/guest/install-guest.sh for this user.
-    rm -rf "$ROOT/share/guest"; cp -R "$REPO/guest" "$ROOT/share/guest"
+    rm -rf "$ROOT/share/guest"; cp -R "$GUEST" "$ROOT/share/guest"
     id -un > "$ROOT/share/user"
     readlink /etc/localtime | sed 's|.*/zoneinfo/||' > "$ROOT/share/timezone"
     echo "$d" > "$ROOT/default"
@@ -174,8 +215,10 @@ cmd_sync_apps() {
         rm -rf "$app"
         mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
         echo "$id" > "$app/Contents/Resources/vzgpu-id"
-        echo "$REPO/tools/vzgpu" > "$app/Contents/Resources/vzgpu-cli"
+        echo "$CLI" > "$app/Contents/Resources/vzgpu-cli"
         cp "$VZCOMP_BIN" "$app/Contents/MacOS/vzcomp"
+        # Its libraries live in vzgpu.app.
+        [ -n "$FRAMEWORKS" ] && install_name_tool -add_rpath "$FRAMEWORKS" "$app/Contents/MacOS/vzcomp" 2>/dev/null
         icon=$(ls "$src"icon.* 2>/dev/null | head -1)
         iconkey=""
         if [ -n "$icon" ] && "$TOOL" icns "$icon" "$app/Contents/Resources/AppIcon.icns"; then
@@ -217,24 +260,6 @@ cmd_launch() {
     cmd_run gio launch "$desktop"
 }
 
-ensure_sync_agent() {
-    local plist=$HOME/Library/LaunchAgents/dev.vzgpu.sync-apps.plist
-    [ -f "$plist" ] && return
-    mkdir -p "$ROOT/share/apps" "$(dirname "$plist")"
-    {
-        echo '<?xml version="1.0" encoding="UTF-8"?>'
-        echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
-        echo '<plist version="1.0"><dict>'
-        echo '  <key>Label</key><string>dev.vzgpu.sync-apps</string>'
-        echo "  <key>ProgramArguments</key><array><string>$REPO/tools/vzgpu</string><string>sync-apps</string></array>"
-        echo "  <key>WatchPaths</key><array><string>$ROOT/share/apps</string></array>"
-        echo '  <key>RunAtLoad</key><true/>'
-        echo "  <key>StandardErrorPath</key><string>$ROOT/sync-apps.log</string>"
-        echo '</dict></plist>'
-    } > "$plist"
-    launchctl bootstrap gui/$(id -u) "$plist"
-}
-
 cmd_shell() {
     local d; d=$(default_distro); ensure_vm "$d"
     local opts=(); while IFS= read -r o; do opts+=("$o"); done < <(ssh_opts "$d")
@@ -246,7 +271,7 @@ cmd_stop() {
     vm_running "$d" || { echo "$d is not running"; return; }
     gssh "$d" root systemctl poweroff || true
     for _ in $(seq 30); do vm_running "$d" || return 0; sleep 1; done
-    pkill -f "vzgpu-venus.* $ROOT/distros/$d\$" || true
+    pkill -f "$VM_PROCS $ROOT/distros/$d\$" || true
 }
 
 cmd_list() {
