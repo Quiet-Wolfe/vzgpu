@@ -711,6 +711,9 @@ impl App {
             mac::EV_KEY => {
                 let keyboard = self.seat.get_keyboard().unwrap();
                 let state = if ev.state == 1 { KeyState::Pressed } else { KeyState::Released };
+                if std::env::var_os("VZCOMP_DEBUG").is_some() {
+                    log!("key {} {:?} focus={:?}", ev.code, state, self.focused);
+                }
                 keyboard.input::<(), _>(self, Keycode::new(ev.code + 8), state, SERIAL_COUNTER.next_serial(), time, |_, _, _| {
                     FilterResult::Forward
                 });
@@ -906,6 +909,7 @@ impl XdgShellHandler for App {
     }
 
     fn fullscreen_request(&mut self, surface: ToplevelSurface, _output: Option<wl_output::WlOutput>) {
+        log!("client: set_fullscreen");
         if let Some(win) = self.wins.get_mut(&surface.wl_surface().id()) {
             win.want_fullscreen = true;
             if win.handle != 0 && win.shown {
@@ -925,6 +929,7 @@ impl XdgShellHandler for App {
     }
 
     fn unfullscreen_request(&mut self, surface: ToplevelSurface) {
+        log!("client: unset_fullscreen");
         if let Some(win) = self.wins.get_mut(&surface.wl_surface().id()) {
             win.want_fullscreen = false;
             if win.handle != 0 {

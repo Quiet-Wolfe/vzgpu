@@ -151,7 +151,18 @@ static void sync_mods(uint64_t window, NSEventModifierFlags want) {
         g_sent_mods ^= mods[i].flag;
     }
 }
+// Keys the client believes are held. A key-up can be swallowed (focus moving to another
+// window or app, a fullscreen Space animation); the client would then auto-repeat the key
+// forever -- e.g. weston-fullscreen toggling fullscreen in a loop on a stuck 'f'.
+static uint8_t g_down[256];
 void vz_release_modifiers(uint64_t window) {
+    for (uint32_t code = 0; code < sizeof g_down; code++) {
+        if (!g_down[code])
+            continue;
+        g_down[code] = 0;
+        struct vz_event ev = {.type = VZ_EV_KEY, .window = window, .code = code, .state = 0, .time_ms = vz_now_ms()};
+        emit(ev);
+    }
     sync_mods(window, 0);
 }
 @implementation VZView
@@ -270,6 +281,11 @@ void vz_release_modifiers(uint64_t window) {
     uint32_t code = evdev_from_mac(e.keyCode);
     if (!code)
         return;
+    if (code < sizeof g_down) {
+        if (!state && !g_down[code])
+            return;  // already released on its behalf
+        g_down[code] = state != 0;
+    }
     struct vz_event ev = {.type = VZ_EV_KEY, .window = self.ctl.handle, .code = code, .state = state,
                           .time_ms = vz_now_ms()};
     emit(ev);
@@ -356,6 +372,12 @@ void vz_release_modifiers(uint64_t window) {
     struct vz_event ev = {.type = VZ_EV_FULLSCREEN, .window = self.handle, .state = on, .width = s.width,
                           .height = s.height};
     emit(ev);
+}
+- (void)windowWillEnterFullScreen:(NSNotification *)n {
+    vz_release_modifiers(self.handle);
+}
+- (void)windowWillExitFullScreen:(NSNotification *)n {
+    vz_release_modifiers(self.handle);
 }
 - (void)windowDidEnterFullScreen:(NSNotification *)n {
     [self fullscreenChanged:YES];
@@ -504,8 +526,20 @@ void vz_window_show(uint64_t window) {
 void vz_window_set_fullscreen(uint64_t window, int fullscreen) {
     VZWindowCtl *c = ctl_for(window);
     BOOL on = (c.window.styleMask & NSWindowStyleMaskFullScreen) != 0;
-    if (c && on != (fullscreen != 0))
+    if (c && on != (fullscreen != 0)) {
+        NSScreen *screen = c.window.screen ?: NSScreen.mainScreen;
+        if (fullscreen && c.window.frame.size.width >= screen.frame.size.width &&
+            c.window.frame.size.height >= screen.visibleFrame.size.height) {
+            // Born fullscreen: it never had a windowed size, and AppKit restores the
+            // pre-fullscreen frame on exit -- a screen-sized window under the menu bar.
+            NSRect v = screen.visibleFrame;
+            NSRect f = NSInsetRect(v, v.size.width / 6, v.size.height / 6);
+            [c.window setFrame:f display:NO];
+        }
+        if (getenv("VZCOMP_DEBUG"))
+            fprintf(stderr, "[vzcomp %d] toggleFullScreen -> %d\n", getpid(), fullscreen);
         [c.window toggleFullScreen:nil];
+    }
 }
 
 void vz_window_set_maximized(uint64_t window, int maximized) {
@@ -859,6 +893,26 @@ void vz_init(vz_event_cb cb, void *ctx) {
     g_cb = cb;
     g_ctx = ctx;
     g_objects = [NSMutableDictionary dictionary];
+    if (getenv("VZCOMP_DEBUG")) {
+        // Activation and Space changes, for diagnosing "the fullscreen Space bounces back".
+        NSNotificationCenter *nc = NSNotificationCenter.defaultCenter;
+        for (NSString *name in @[ NSApplicationDidBecomeActiveNotification, NSApplicationDidResignActiveNotification,
+                                  NSApplicationDidHideNotification, NSWindowDidBecomeKeyNotification,
+                                  NSWindowDidResignKeyNotification, NSWindowDidChangeOcclusionStateNotification ])
+            [nc addObserverForName:name object:nil queue:nil usingBlock:^(NSNotification *n) {
+                NSWindow *w = [n.object isKindOfClass:NSWindow.class] ? n.object : nil;
+                fprintf(stderr, "[vzcomp %d] %s%s\n", getpid(), n.name.UTF8String,
+                        w ? [NSString stringWithFormat:@" win=%ld visible=%d onActiveSpace=%d", (long)w.windowNumber,
+                                                       (w.occlusionState & NSWindowOcclusionStateVisible) != 0,
+                                                       w.isOnActiveSpace].UTF8String : "");
+            }];
+        [NSWorkspace.sharedWorkspace.notificationCenter addObserverForName:NSWorkspaceActiveSpaceDidChangeNotification
+                                                                    object:nil queue:nil usingBlock:^(NSNotification *n) {
+            (void)n;
+            fprintf(stderr, "[vzcomp %d] active Space changed; frontmost=%s\n", getpid(),
+                    NSWorkspace.sharedWorkspace.frontmostApplication.localizedName.UTF8String ?: "?");
+        }];
+    }
     const char *snapshot = getenv("VZCOMP_SNAPSHOT");
     if (snapshot) {
         NSString *directory = @(snapshot);
