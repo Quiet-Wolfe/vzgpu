@@ -1,0 +1,91 @@
+Module                  Size  Used by
+dm_crypt               61440  0
+snd_dummy              24576  0
+snd_seq               118784  0
+snd_seq_device         16384  1 snd_seq
+snd_pcm               188416  1 snd_dummy
+snd_timer              53248  2 snd_seq,snd_pcm
+snd                   135168  5 snd_seq,snd_seq_device,snd_timer,snd_pcm,snd_dummy
+soundcore              12288  1 snd
+uinput                 28672  0
+nf_conntrack_netlink    53248  0
+ip_set                 61440  0
+xt_multiport           16384  0
+xt_comment             12288  0
+xt_mark                12288  0
+xt_addrtype            12288  0
+xt_conntrack           12288  0
+xt_MASQUERADE          16384  0
+ip6table_filter        12288  0
+ip6table_nat           12288  0
+ip6_tables             28672  2 ip6table_filter,ip6table_nat
+iptable_mangle         12288  0
+iptable_filter         12288  0
+iptable_nat            12288  0
+ip_tables              28672  3 iptable_filter,iptable_nat,iptable_mangle
+nft_masq               12288  0
+nft_compat             20480  0
+wireguard             102400  0
+libcurve25519          32768  1 wireguard
+vxlan                 135168  0
+ip6_udp_tunnel         16384  2 wireguard,vxlan
+udp_tunnel             36864  2 wireguard,vxlan
+ipvlan                 40960  0
+macvlan                32768  0
+br_netfilter           32768  0
+bridge                385024  1 br_netfilter
+stp                    12288  1 bridge
+llc                    16384  2 bridge,stp
+veth                   36864  0
+tun                    69632  0
+ntfs3                 307200  0
+exfat                 118784  0
+udf                   147456  0
+crc_itu_t              12288  1 udf
+isofs                  57344  0
+loop                   36864  0
+squashfs               90112  0
+overlay               212992  0
+vmw_vsock_virtio_transport    20480  0
+virtio_balloon         28672  0
+nf_conntrack_netbios_ns    12288  1
+nf_conntrack_broadcast    12288  1 nf_conntrack_netbios_ns
+nft_fib_inet           12288  1
+nft_fib_ipv4           12288  1 nft_fib_inet
+nft_fib_ipv6           12288  1 nft_fib_inet
+nft_fib                12288  3 nft_fib_ipv6,nft_fib_ipv4,nft_fib_inet
+nft_reject_inet        12288  6
+nf_reject_ipv4         16384  1 nft_reject_inet
+nf_reject_ipv6         24576  1 nft_reject_inet
+nft_reject             12288  1 nft_reject_inet
+nft_ct                 24576  9
+nft_chain_nat          12288  3
+nf_nat                 61440  5 ip6table_nat,nft_masq,nft_chain_nat,iptable_nat,xt_MASQUERADE
+nf_conntrack          196608  8 xt_conntrack,nf_nat,nft_ct,nf_conntrack_netbios_ns,nf_conntrack_broadcast,nf_conntrack_netlink,nft_masq,xt_MASQUERADE
+nf_defrag_ipv6         24576  1 nf_conntrack
+nf_defrag_ipv4         12288  1 nf_conntrack
+nf_tables             327680  288 nft_ct,nft_compat,nft_reject_inet,nft_fib_ipv6,nft_fib_ipv4,nft_masq,nft_chain_nat,nft_reject,nft_fib,nft_fib_inet
+sunrpc                815104  1
+qrtr                   53248  2
+rfkill                 40960  1
+virtio_net            114688  0
+net_failover           20480  1 virtio_net
+failover               12288  1 net_failover
+vfat                   24576  1
+fat                   114688  1 vfat
+binfmt_misc            24576  1
+vsock_loopback         12288  0
+vmw_vsock_virtio_transport_common    57344  2 vsock_loopback,vmw_vsock_virtio_transport
+vmw_vsock_vmci_transport    45056  0
+vmw_vmci              102400  1 vmw_vsock_vmci_transport
+zram                   65536  1
+vsock                  73728  4 vmw_vsock_virtio_transport_common,vsock_loopback,vmw_vsock_virtio_transport,vmw_vsock_vmci_transport
+lz4hc_compress         20480  1 zram
+ghash_ce               20480  0
+gf128mul               16384  1 ghash_ce
+virtio_gpu             98304  7
+virtio_dma_buf         12288  1 virtio_gpu
+gpio_keys              20480  0
+virtiofs               36864  1
+fuse                  262144  4 virtiofs
+i2c_dev                24576  0

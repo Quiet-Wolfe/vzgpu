@@ -732,6 +732,14 @@ int main(int argc, const char **argv) {
         NSString *cmdline = @"console=hvc0 root=UUID=96ff3c27-158a-4f65-a5a8-2c3344757f97 rootflags=subvol=root rw "
                              "systemd.unit=multi-user.target systemd.debug_shell=hvc0 "
                              "systemd.mask=serial-getty@hvc0.service systemd.firstboot=off";
+        // VZGPU_KERNEL=<name> boots <vmdir>/<name>/Image instead of <vmdir>/Image. A kernel dir
+        // may carry its own command line (cmdline) and initramfs.img; our own kernel has
+        // everything built in and needs no initramfs, so root= must be a PARTUUID or device.
+        NSURL *kdir = getenv("VZGPU_KERNEL") ? [dir URLByAppendingPathComponent:@(getenv("VZGPU_KERNEL"))] : dir;
+        NSString *kcmd = [NSString stringWithContentsOfURL:[kdir URLByAppendingPathComponent:@"cmdline"]
+                                                  encoding:NSUTF8StringEncoding error:nil];
+        if (kcmd.length)
+            cmdline = [kcmd stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
         if (getenv("VZGPU_CMDLINE"))
             cmdline = @(getenv("VZGPU_CMDLINE"));
         // SSH: hand <vmdir>/ssh/id_ed25519.pub to systemd as the root authorized_keys
@@ -742,10 +750,10 @@ int main(int argc, const char **argv) {
                                                         " systemd.wants=sshd.service",
                                                        [pub base64EncodedStringWithOptions:0]];
 
-        // VZGPU_KERNEL=<name> boots <vmdir>/<name>/{Image,initramfs.img} instead of the default pair.
-        NSURL *kdir = getenv("VZGPU_KERNEL") ? [dir URLByAppendingPathComponent:@(getenv("VZGPU_KERNEL"))] : dir;
         VZLinuxBootLoader *boot = [[VZLinuxBootLoader alloc] initWithKernelURL:[kdir URLByAppendingPathComponent:@"Image"]];
-        boot.initialRamdiskURL = [kdir URLByAppendingPathComponent:@"initramfs.img"];
+        NSURL *initrd = [kdir URLByAppendingPathComponent:@"initramfs.img"];
+        if ([initrd checkResourceIsReachableAndReturnError:nil])
+            boot.initialRamdiskURL = initrd;
         boot.commandLine = cmdline;
 
         VZVirtualMachineConfiguration *cfg = [VZVirtualMachineConfiguration new];
