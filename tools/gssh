@@ -1,0 +1,10 @@
+#!/bin/bash
+# gssh [ssh options...] [command] — ssh to the vzgpu guest as root. The IP comes from the Mac's
+# vmnet DHCP leases, matched by the VM's fixed MAC (02:76:7a:67:70:75).
+VM=${VZGPU_VM:-$HOME/VMs/fedora45-vzgpu}
+ip=$(awk '/ip_address=/{split($0,a,"=");ip=a[2]} /hw_address=1,2:76:7a:67:70:75/{print ip}' /var/db/dhcpd_leases | tail -1)
+[ -n "$ip" ] || { echo "gssh: no DHCP lease for the guest yet" >&2; exit 1; }
+opts=()
+while [[ "$1" == -* ]]; do opts+=("$1"); case "$1" in -[RLDiop]) opts+=("$2"); shift;; esac; shift; done
+exec ssh -q "${opts[@]}" -i "$VM/ssh/id_ed25519" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    -o ConnectTimeout=5 -o BatchMode=yes root@"$ip" "$@"

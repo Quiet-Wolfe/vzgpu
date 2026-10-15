@@ -1,0 +1,17 @@
+#!/bin/bash
+# gsh [-t seconds] 'command'  — run a command in the guest's hvc0 debug shell and
+# print its output. Uses a unique end marker in run/console.log.
+VM=${VZGPU_VM:-$HOME/VMs/fedora45-vzgpu}
+T=60
+if [ "$1" = "-t" ]; then T=$2; shift 2; fi
+id=$RANDOM$RANDOM
+start=$(wc -c < "$VM/run/console.log")
+printf '%s; echo "=E""ND%s rc=$?"\n' "$1" "$id" > "$VM/run/in.fifo"
+end=$((SECONDS + T))
+while [ $SECONDS -lt $end ]; do
+    if tail -c +$((start + 1)) "$VM/run/console.log" | grep -aq "=END$id"; then break; fi
+    perl -e 'select(undef,undef,undef,0.3)'
+done
+tail -c +$((start + 1)) "$VM/run/console.log" | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g; s/\x1b\][^\\]*\\//g' \
+    | sed -n "1,/=END$id/p" | tail -n +2
+grep -aq "=END$id" <(tail -c +$((start + 1)) "$VM/run/console.log") || echo "[gsh: timeout after ${T}s]"

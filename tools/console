@@ -1,0 +1,27 @@
+#!/usr/bin/python3
+# Interactive guest console: shows run/console.log live and sends your keystrokes
+# to the guest's hvc0 (run/in.fifo). Ctrl-] quits. Safe to run alongside gsh.
+import os, sys, termios, tty, select
+
+vm = os.environ.get("VZGPU_VM", os.path.expanduser("~/VMs/fedora45-vzgpu"))
+log = open(os.path.join(vm, "run/console.log"), "rb")
+log.seek(max(0, os.path.getsize(log.name) - 4000))
+fifo = os.open(os.path.join(vm, "run/in.fifo"), os.O_WRONLY)
+fd = sys.stdin.fileno()
+old = termios.tcgetattr(fd)
+sys.stdout.write("[vzgpu console: Ctrl-] to quit]\r\n")
+tty.setraw(fd)
+try:
+    while True:
+        data = log.read()
+        if data:
+            os.write(1, data)
+        r, _, _ = select.select([fd], [], [], 0.05)
+        if r:
+            b = os.read(fd, 1024)
+            if b"\x1d" in b:
+                break
+            os.write(fifo, b.replace(b"\r", b"\n"))
+finally:
+    termios.tcsetattr(fd, termios.TCSADRAIN, old)
+    print()

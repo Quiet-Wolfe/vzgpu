@@ -1,0 +1,41 @@
+[vmm 015.695] config valid; cmdline: console=hvc0 root=UUID=96ff3c27-158a-4f65-a5a8-2c3344757f97 rootflags=subvol=root rw systemd.unit=multi-user.target systemd.debug_shell=hvc0 systemd.mask=serial-getty@hvc0.service systemd.firstboot=off systemd.set_credential_binary=ssh.authorized_keys.root:c3NoLWVkMjU1MTkgQUFBQUMzTnphQzFsWkRJMU5URTVBQUFBSUpTSURzVkVxSXRpU293OEh3dmZFN2Y5SWVZdTZsUXF0bVQzZDFwMXhHUFUgdnpncHUtZ3Vlc3QK systemd.wants=sshd.service
+[vmm 015.696] custom device created; shm regions=1
+[vmm 015.696]   shm region id=1 size=0x200000000
+[vmm 015.696] virglrenderer up: venus capset v0, 156 bytes
+[vmm 015.838] device reset
+[vmm 015.838] VM started
+[vmm 016.158] device reset
+[vmm 017.788] DRIVER_OK; negotiated subset0=0x30000039 subset1=0x00000005
+[vmm 017.788] q0: GET_CAPSET_INFO #1 req=32B resp=40B flags=0 ctx=0 ring=0 fence=0
+[vmm 017.788] q0: GET_DISPLAY_INFO #1 req=24B resp=408B flags=0 ctx=0 ring=0 fence=0
+[vmm 017.796] q0: RESOURCE_CREATE_2D #1 req=40B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 017.796] q0: RESOURCE_ATTACH_BACKING #1 req=64B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 022.286] q0: SET_SCANOUT #1 req=48B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 022.286] q0: TRANSFER_TO_HOST_2D #1 req=56B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 022.286] q0: SET_SCANOUT #2 req=48B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 022.286] q0: RESOURCE_FLUSH #1 req=48B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 022.312] q0: RESOURCE_CREATE_2D #2 req=40B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 022.312] q0: RESOURCE_ATTACH_BACKING #2 req=1968B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 022.314] q0: TRANSFER_TO_HOST_2D #2 req=56B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 022.314] q0: RESOURCE_FLUSH #2 req=48B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 022.737] q0: GET_CAPSET #1 req=32B resp=180B flags=0 ctx=0 ring=0 fence=0
+[vmm 022.738] q0: CTX_CREATE #1 req=96B resp=24B flags=0 ctx=3 ring=0 fence=0
+[vmm 022.738] CTX_CREATE ctx=3 init=0x4 name=vulkaninfo -> 0
+[vmm 022.738] q0: RESOURCE_CREATE_BLOB #1 req=56B resp=24B flags=0 ctx=3 ring=0 fence=0
+[vmm 022.738] q0: RESOURCE_MAP_BLOB #1 req=40B resp=32B flags=0 ctx=0 ring=0 fence=0
+[vmm 022.738] q0: CTX_ATTACH_RESOURCE #1 req=32B resp=24B flags=0 ctx=3 ring=0 fence=0
+[vmm 022.738] q0: SUBMIT_3D #1 req=172B resp=24B flags=0 ctx=3 ring=0 fence=0
+[vmm 022.738] q0: RESOURCE_CREATE_BLOB #2 req=56B resp=24B flags=0 ctx=3 ring=0 fence=0
+[vmm 022.738] q0: RESOURCE_MAP_BLOB #2 req=40B resp=32B flags=0 ctx=0 ring=0 fence=0
+[vmm 022.738] q0: CTX_ATTACH_RESOURCE #2 req=32B resp=24B flags=0 ctx=3 ring=0 fence=0
+[vmm 022.845] q0: SUBMIT_3D #2 req=56B resp=24B flags=0 ctx=3 ring=0 fence=0
+[vmm 022.860] q0: CTX_DETACH_RESOURCE #1 req=32B resp=24B flags=0 ctx=3 ring=0 fence=0
+[vmm 022.860] q0: CTX_DETACH_RESOURCE #2 req=32B resp=24B flags=0 ctx=3 ring=0 fence=0
+[vmm 022.860] q0: CTX_DESTROY #1 req=24B resp=24B flags=0 ctx=3 ring=0 fence=0
+[vmm 022.860] q0: RESOURCE_UNMAP_BLOB #1 req=32B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 022.860] q0: RESOURCE_UNREF #1 req=32B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 022.860] q0: RESOURCE_UNMAP_BLOB #2 req=32B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 022.860] q0: RESOURCE_UNREF #2 req=32B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 097.598] q0: CTX_CREATE #2 req=96B resp=24B flags=0 ctx=3 ring=0 fence=0
+[vmm 097.598] CTX_CREATE ctx=3 init=0x4 name=vulkaninfo -> 0
+[vmm 097.606] q0: CTX_DESTROY #2 req=24B resp=24B flags=0 ctx=3 ring=0 fence=0
