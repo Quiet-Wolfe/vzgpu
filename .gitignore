@@ -1,0 +1,8 @@
+build/
+*.img
+*.raw
+Image
+initramfs*
+vmlinuz*
+run/
+.DS_Store

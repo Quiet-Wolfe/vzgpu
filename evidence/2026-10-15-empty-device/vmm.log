@@ -1,0 +1,11 @@
+[vmm 89.554] config valid; cmdline: console=hvc0 root=UUID=96ff3c27-158a-4f65-a5a8-2c3344757f97 rootflags=subvol=root ro systemd.unit=multi-user.target systemd.debug_shell=hvc0 systemd.mask=serial-getty@hvc0.service systemd.firstboot=off
+[vmm 89.555] custom device created; shm regions=0
+[vmm 89.708] device reset
+[vmm 89.709] VM started
+[vmm 90.022] device reset
+[vmm 91.604] DRIVER_OK; negotiated features subset0=0x30000000 subset1=0x00000005
+[vmm 91.605] q0: GET_DISPLAY_INFO #1 req=24B resp=408B flags=0
+[vmm 91.610] q0: RESOURCE_CREATE_2D #1 req=40B resp=24B flags=0
+[vmm 91.610] q0: RESOURCE_ATTACH_BACKING #1 req=6320B resp=24B flags=0
+[vmm 116.119] device stop
+[vmm 116.124] guest stopped
