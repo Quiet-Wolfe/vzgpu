@@ -23,9 +23,14 @@ What is verified (Fedora 45 Beta guest, kernel 7.2.0-61.fc45, macOS 27.2, M5):
   KosmicKrisp, so the ceiling is not the ICD — likely the Venus host in Homebrew
   virglrenderer 0.10.4e (not yet confirmed).
 
-Not yet verified: a submit + fence workload (compute dispatch). `vulkaninfo` creates
-a device and maps blobs but does not wait on fences. The elfuse compute smoke test
-(`~/Projects/elfuse/tests/venus-vulkan-smoke.c` + `venus-fill.comp`) is the next gate.
+**2026-10-15 — compute smoke test: PASS** (host ICD KosmicKrisp, Teleport off).
+elfuse's `venus-vulkan-smoke.c` dispatches `venus-fill.comp` (`values[i] = i*3+7`, 64
+lanes) into host-visible memory, `vkQueueWaitIdle`s, maps and checks every value:
+`Venus Vulkan compute dispatch ok`, exit 0, 54 ms. During the run the guest sent 10
+`SUBMIT_3D`, 3 of them with per-context fences (`FENCE|RING_IDX`, rings 0 and 1),
+4 HOST3D blobs mapped/unmapped through the SHM region. Evidence:
+`evidence/2026-10-15-venus-compute/`. Not distinguished: whether those fences were
+held until `write_context_fence` or had already signalled at submit.
 
 ### Findings
 

@@ -1,0 +1,4 @@
+Venus Vulkan compute dispatch ok
+Venus Vulkan device and buffer ok
+exit=0
+mesa-vulkan-drivers-26.2.4-1.fc45.aarch64

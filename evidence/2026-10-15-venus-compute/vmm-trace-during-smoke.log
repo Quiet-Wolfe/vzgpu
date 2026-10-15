@@ -1,0 +1,58 @@
+[vmm 328.002] q0: SET_SCANOUT #1 req=48B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 328.002] q0: TRANSFER_TO_HOST_2D #1 req=56B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 328.002] q0: SET_SCANOUT #2 req=48B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 328.002] q0: RESOURCE_FLUSH #1 req=48B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 328.024] q0: RESOURCE_CREATE_2D #2 req=40B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 328.024] q0: RESOURCE_ATTACH_BACKING #2 req=6384B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 328.025] q0: RESOURCE_CREATE_2D #3 req=40B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 328.025] q0: RESOURCE_ATTACH_BACKING #3 req=112B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 328.026] q0: TRANSFER_TO_HOST_2D #2 req=56B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 328.026] q0: RESOURCE_FLUSH #2 req=48B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 328.038] q0: RESOURCE_CREATE_2D #4 req=40B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 328.038] q0: RESOURCE_ATTACH_BACKING #4 req=96B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 328.109] q0: GET_CAPSET #1 req=32B resp=180B flags=0 ctx=0 ring=0 fence=0
+[vmm 328.110] q0: CTX_CREATE #1 req=96B resp=24B flags=0 ctx=3 ring=0 fence=0
+[vmm 328.110] CTX_CREATE ctx=3 init=0x4 name=smoke -> 0
+[vmm 328.110] q0: RESOURCE_CREATE_BLOB #1 req=56B resp=24B flags=0 ctx=3 ring=0 fence=0
+[vmm 328.110] CREATE_BLOB rid=6 mem=2 flags=0x1 id=0 size=0x24000 nr=0 -> 0
+[vmm 328.110] q0: RESOURCE_MAP_BLOB #1 req=40B resp=32B flags=0 ctx=0 ring=0 fence=0
+[vmm 328.110] MAP_BLOB rid=6 ptr=0x104718000 -> shm+0x0 size=0x24000 info=0x1
+[vmm 328.110] q0: CTX_ATTACH_RESOURCE #1 req=32B resp=24B flags=0 ctx=3 ring=0 fence=0
+[vmm 328.110] q0: SUBMIT_3D #1 req=172B resp=24B flags=0 ctx=3 ring=0 fence=0
+[vmm 328.110] q0: RESOURCE_CREATE_BLOB #2 req=56B resp=24B flags=0 ctx=3 ring=0 fence=0
+[vmm 328.110] CREATE_BLOB rid=7 mem=2 flags=0x1 id=0 size=0x100000 nr=0 -> 0
+[vmm 328.110] q0: RESOURCE_MAP_BLOB #2 req=40B resp=32B flags=0 ctx=0 ring=0 fence=0
+[vmm 328.110] MAP_BLOB rid=7 ptr=0x109498000 -> shm+0x24000 size=0x100000 info=0x1
+[vmm 328.110] q0: CTX_ATTACH_RESOURCE #2 req=32B resp=24B flags=0 ctx=3 ring=0 fence=0
+[vmm 328.212] q0: SUBMIT_3D #2 req=56B resp=24B flags=0 ctx=3 ring=0 fence=0
+[vmm 328.221] q0: SUBMIT_3D #3 req=56B resp=24B flags=0 ctx=3 ring=0 fence=0
+[vmm 328.222] q0: SUBMIT_3D #4 req=56B resp=24B flags=0 ctx=3 ring=0 fence=0
+[vmm 328.222] q0: RESOURCE_CREATE_BLOB #3 req=56B resp=24B flags=0 ctx=3 ring=0 fence=0
+[vmm 328.222] CREATE_BLOB rid=8 mem=2 flags=0x1 id=7 size=0x4000 nr=0 -> 0
+[vmm 328.222] q0: RESOURCE_MAP_BLOB #3 req=40B resp=32B flags=0 ctx=0 ring=0 fence=0
+[vmm 328.222] MAP_BLOB rid=8 ptr=0x104e44000 -> shm+0x124000 size=0x4000 info=0x1
+[vmm 328.222] q0: CTX_ATTACH_RESOURCE #3 req=32B resp=24B flags=0 ctx=3 ring=0 fence=0
+[vmm 328.222] q0: SUBMIT_3D #5 req=32B resp=24B flags=3 ctx=3 ring=1 fence=1
+[vmm 328.222] q0: SUBMIT_3D #6 req=56B resp=24B flags=0 ctx=3 ring=0 fence=0
+[vmm 328.222] q0: RESOURCE_CREATE_BLOB #4 req=56B resp=24B flags=0 ctx=3 ring=0 fence=0
+[vmm 328.222] CREATE_BLOB rid=9 mem=2 flags=0x1 id=0 size=0x800000 nr=0 -> 0
+[vmm 328.222] q0: RESOURCE_MAP_BLOB #4 req=40B resp=32B flags=0 ctx=0 ring=0 fence=0
+[vmm 328.222] MAP_BLOB rid=9 ptr=0x10e800000 -> shm+0x128000 size=0x800000 info=0x1
+[vmm 328.222] q0: CTX_ATTACH_RESOURCE #4 req=32B resp=24B flags=0 ctx=3 ring=0 fence=0
+[vmm 328.222] q0: SUBMIT_3D #7 req=56B resp=24B flags=3 ctx=3 ring=1 fence=2
+[vmm 328.223] q0: SUBMIT_3D #8 req=56B resp=24B flags=0 ctx=3 ring=0 fence=0
+[vmm 328.224] q0: SUBMIT_3D #9 req=56B resp=24B flags=0 ctx=3 ring=0 fence=0
+[vmm 328.224] q0: CTX_DETACH_RESOURCE #1 req=32B resp=24B flags=0 ctx=3 ring=0 fence=0
+[vmm 328.224] q0: RESOURCE_UNMAP_BLOB #1 req=32B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 328.224] q0: RESOURCE_UNREF #1 req=32B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 328.224] q0: SUBMIT_3D #10 req=48B resp=24B flags=3 ctx=3 ring=0 fence=3
+[vmm 328.224] q0: CTX_DETACH_RESOURCE #2 req=32B resp=24B flags=0 ctx=3 ring=0 fence=0
+[vmm 328.224] q0: CTX_DETACH_RESOURCE #3 req=32B resp=24B flags=0 ctx=3 ring=0 fence=0
+[vmm 328.224] q0: CTX_DETACH_RESOURCE #4 req=32B resp=24B flags=0 ctx=3 ring=0 fence=0
+[vmm 328.224] q0: CTX_DESTROY #1 req=24B resp=24B flags=0 ctx=3 ring=0 fence=0
+[vmm 328.224] q0: RESOURCE_UNMAP_BLOB #2 req=32B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 328.224] q0: RESOURCE_UNREF #2 req=32B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 328.224] q0: RESOURCE_UNMAP_BLOB #3 req=32B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 328.224] q0: RESOURCE_UNREF #3 req=32B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 328.224] q0: RESOURCE_UNMAP_BLOB #4 req=32B resp=24B flags=0 ctx=0 ring=0 fence=0
+[vmm 328.224] q0: RESOURCE_UNREF #4 req=32B resp=24B flags=0 ctx=0 ring=0 fence=0
