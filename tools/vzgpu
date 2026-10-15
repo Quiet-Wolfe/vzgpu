@@ -1,0 +1,159 @@
+#!/bin/bash
+# vzgpu — Linux apps as native macOS apps (WSLg for the Mac).
+#
+#   vzgpu install [-D Fedora]   download a stock cloud image and set it up (one command)
+#   vzgpu run <cmd...>          run a Linux app; it opens as a macOS app (starts things as needed)
+#   vzgpu shell                 interactive shell in the guest, as you
+#   vzgpu stop                  shut the guest down
+#   vzgpu list                  installed distros
+#
+# Everything lives in ~/Library/Application Support/vzgpu:
+#   kernel/Image                our kernel (kernel/build-kernel.sh): one for every distro
+#   distros/<name>/             disk.img, kernel/{Image -> ../../../kernel/Image, cmdline}, ssh/
+#   share/                      virtiofs tag "vzgpu": guest package, user name, exported apps
+set -euo pipefail
+REPO=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+ROOT="$HOME/Library/Application Support/vzgpu"
+TOOL=$REPO/build/vzgpu-tool
+VZCOMP_APP=$REPO/build/VZGPU\ Debug.app
+MAC=02:76:7a:67:70:75   # the VMM's fixed MAC (one guest at a time for now)
+
+die() { echo "vzgpu: $*" >&2; exit 1; }
+say() { printf '\033[1m%s\033[0m\n' "$*"; }
+
+# name|image URL|checksum file URL|extra kernel args
+distro_info() {
+    case "$1" in
+    Fedora|fedora|Fedora-45)
+        local b=https://dl.fedoraproject.org/pub/fedora/linux/releases/test/45_Beta/Cloud/aarch64/images
+        echo "Fedora|$b/Fedora-Cloud-Base-AmazonEC2-45_Beta-1.3.aarch64.raw.xz|$b/Fedora-Cloud-images-45_Beta-1.3-aarch64-CHECKSUM|rootfstype=btrfs rootflags=subvol=root" ;;
+    *) die "unknown distro '$1' (available: Fedora)" ;;
+    esac
+}
+
+default_distro() { cat "$ROOT/default" 2>/dev/null || echo Fedora; }
+guest_ip() { awk -v mac="1,${MAC#0}" '/ip_address=/{split($0,a,"=");ip=a[2]} $0 ~ "hw_address="mac {print ip}' /var/db/dhcpd_leases 2>/dev/null | tail -1; }
+vm_running() { pgrep -f "vzgpu-venus.* $ROOT/distros/$1\$" >/dev/null; }
+gssh() {
+    local d=$1 user=$2; shift 2
+    local ip; ip=$(guest_ip); [ -n "$ip" ] || return 255
+    ssh -q -i "$ROOT/distros/$d/ssh/id_ed25519" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        -o ConnectTimeout=3 -o BatchMode=yes "$user@$ip" "$@"
+}
+
+ensure_vzcomp() {
+    pgrep -f 'MacOS/vzcomp$' >/dev/null && return
+    local plist=$HOME/Library/LaunchAgents/dev.vzgpu.vzcomp.plist
+    mkdir -p "$(dirname "$plist")"
+    cat > "$plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>dev.vzgpu.vzcomp</string>
+  <key>ProgramArguments</key><array><string>$VZCOMP_APP/Contents/MacOS/vzcomp</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardErrorPath</key><string>$ROOT/vzcomp.log</string>
+</dict></plist>
+EOF
+    launchctl bootout gui/$(id -u)/dev.vzgpu.vzcomp 2>/dev/null || true
+    launchctl bootstrap gui/$(id -u) "$plist"
+    for _ in $(seq 20); do pgrep -f 'MacOS/vzcomp$' >/dev/null && return; sleep 0.25; done
+    die "vzcomp did not start (see $ROOT/vzcomp.log)"
+}
+
+ensure_vm() {
+    local d=$1
+    [ -d "$ROOT/distros/$d" ] || die "$d is not installed (vzgpu install -D $d)"
+    ensure_vzcomp
+    if ! vm_running "$d"; then
+        pgrep -f 'build/vzgpu-venus' >/dev/null && die "another guest is running (vzgpu stop)"
+        VZGPU_KERNEL=kernel nohup "$REPO/tools/run-vm" "$ROOT/distros/$d" >/dev/null 2>&1 &
+    fi
+    for _ in $(seq 120); do gssh "$d" root true 2>/dev/null && return; sleep 1; done
+    die "$d did not come up (log: $ROOT/distros/$d/run/console.log)"
+}
+
+cmd_install() {
+    local d; d=$(default_distro)
+    while [ $# -gt 0 ]; do case "$1" in -D|--distribution) d=$2; shift 2 ;; *) die "install: unknown option $1" ;; esac; done
+    IFS='|' read -r d url sums kargs < <(distro_info "$d")
+    local dir="$ROOT/distros/$d"
+    [ -f "$dir/disk.img" ] && die "$d is already installed ($dir)"
+    [ -x "$TOOL" ] || die "build the tools first (missing $TOOL)"
+    local kimg=${VZGPU_KERNEL_IMAGE:-$REPO/build/kernel/Image}
+    [ -f "$kimg" ] || die "no kernel image at $kimg (kernel/build-kernel.sh)"
+    mkdir -p "$ROOT/cache" "$ROOT/kernel" "$dir/kernel" "$dir/ssh" "$ROOT/share"
+    cp "$kimg" "$ROOT/kernel/Image"
+
+    local xz="$ROOT/cache/${url##*/}"
+    say "Downloading $d (${url##*/})"
+    curl -fL --progress-bar -C - -o "$xz" "$url" || die "download failed"
+    local want; want=$(curl -fsSL "$sums" | sed -n "s/^SHA256 (${url##*/}) = //p")
+    [ -n "$want" ] || die "no checksum for ${url##*/}"
+    [ "$(shasum -a 256 "$xz" | cut -d' ' -f1)" = "$want" ] || { rm -f "$xz"; die "checksum mismatch; deleted the download"; }
+
+    say "Unpacking"
+    "$TOOL" unxz "$xz" "$dir/disk.img.part" && mv "$dir/disk.img.part" "$dir/disk.img"
+    # A roomy sparse disk; the guest grows its root partition into it on first boot.
+    dd if=/dev/zero of="$dir/disk.img" bs=1 count=0 seek="${VZGPU_DISK_SIZE:-64g}" 2>/dev/null
+
+    local partuuid; read -r partuuid _ < <("$TOOL" rootpart "$dir/disk.img")
+    ln -sf ../../../kernel/Image "$dir/kernel/Image"
+    echo "console=hvc0 root=PARTUUID=$partuuid $kargs rw cloud-init=disabled systemd.firstboot=off systemd.mask=systemd-growfs-root.service systemd.mask=systemd-repart.service systemd.debug_shell=hvc0 systemd.mask=serial-getty@hvc0.service" > "$dir/kernel/cmdline"
+    [ -f "$dir/ssh/id_ed25519" ] || ssh-keygen -q -t ed25519 -N '' -C "vzgpu-$d" -f "$dir/ssh/id_ed25519"
+
+    # The guest's first boot runs share/guest/install-guest.sh for this user.
+    rm -rf "$ROOT/share/guest"; cp -R "$REPO/guest" "$ROOT/share/guest"
+    id -un > "$ROOT/share/user"
+    echo "$d" > "$ROOT/default"
+
+    say "First boot (installs the guest services)"
+    ensure_vm "$d"
+    for _ in $(seq 600); do
+        gssh "$d" root test -f /var/lib/vzgpu/installed 2>/dev/null && break
+        sleep 1
+    done
+    gssh "$d" root test -f /var/lib/vzgpu/installed || die "first-boot setup did not finish: vzgpu shell, then journalctl -u vzgpu-firstboot"
+    say "$d is ready. Try: vzgpu run gnome-calculator"
+}
+
+cmd_run() {
+    [ $# -gt 0 ] || die "usage: vzgpu run <cmd...>"
+    local d; d=$(default_distro)
+    ensure_vm "$d"
+    # Detach: the app outlives this command, like launching from the Dock.
+    gssh "$d" "$(id -un)" "nohup $(printf '%q ' "$@") >/dev/null 2>&1 &"
+}
+
+cmd_shell() {
+    local d; d=$(default_distro); ensure_vm "$d"
+    ssh -i "$ROOT/distros/$d/ssh/id_ed25519" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        -o LogLevel=ERROR -t "$(id -un)@$(guest_ip)" "$@"
+}
+
+cmd_stop() {
+    local d; d=$(default_distro)
+    vm_running "$d" || { echo "$d is not running"; return; }
+    gssh "$d" root systemctl poweroff || true
+    for _ in $(seq 30); do vm_running "$d" || return 0; sleep 1; done
+    pkill -f "vzgpu-venus.* $ROOT/distros/$d\$" || true
+}
+
+cmd_list() {
+    local def; def=$(default_distro)
+    for p in "$ROOT"/distros/*/; do
+        [ -d "$p" ] || continue
+        local n; n=$(basename "$p")
+        printf '%s %s%s\n' "$([ "$n" = "$def" ] && echo '*' || echo ' ')" "$n" "$(vm_running "$n" && echo '  (running)')"
+    done
+}
+
+case "${1:-}" in
+    install) shift; cmd_install "$@" ;;
+    run) shift; cmd_run "$@" ;;
+    shell) shift; cmd_shell "$@" ;;
+    stop) cmd_stop ;;
+    list|-l) cmd_list ;;
+    *) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac
