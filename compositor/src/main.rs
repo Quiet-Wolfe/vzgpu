@@ -1,0 +1,91 @@
+//! vzcomp: a Wayland compositor that turns each Linux app into a native macOS app.
+//!
+//!   vzcomp [--socket PATH]   listen; every connection gets its own app process
+//!   vzcomp --client-fd N     (internal) serve one connected client as one macOS app
+//!
+//! One process per Wayland connection is what gives every Linux app its own Dock icon,
+//! menu bar, Cmd-Tab entry and fullscreen Space: macOS ties those to processes.
+
+macro_rules! log {
+    ($($t:tt)*) => {{
+        eprintln!("[vzcomp {}] {}", std::process::id(), format!($($t)*));
+    }};
+}
+
+mod comp;
+mod mac;
+
+use std::os::fd::AsRawFd;
+use std::os::unix::net::UnixListener;
+use std::os::unix::process::CommandExt;
+use std::path::PathBuf;
+use std::process::Command;
+
+fn default_socket() -> PathBuf {
+    // The per-user temp dir (what NSTemporaryDirectory returns), not $TMPDIR, which
+    // shells and sandboxes override.
+    let mut buf = vec![0u8; 1024];
+    let n = unsafe { libc::confstr(libc::_CS_DARWIN_USER_TEMP_DIR, buf.as_mut_ptr() as *mut _, buf.len()) };
+    let dir = if n > 0 && n <= buf.len() {
+        String::from_utf8_lossy(&buf[..n - 1]).into_owned()
+    } else {
+        std::env::temp_dir().to_string_lossy().into_owned()
+    };
+    PathBuf::from(dir).join("vzcomp").join("wayland-0")
+}
+
+fn serve(socket: PathBuf) -> ! {
+    if let Some(dir) = socket.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::remove_file(&socket);
+    let listener = UnixListener::bind(&socket).unwrap_or_else(|e| {
+        log!("bind {}: {e}", socket.display());
+        std::process::exit(1)
+    });
+    unsafe { libc::signal(libc::SIGCHLD, libc::SIG_IGN) };  // children are reaped automatically
+    log!("listening on {}", socket.display());
+    let exe = std::env::current_exe().expect("current_exe");
+    for conn in listener.incoming() {
+        let stream = match conn {
+            Ok(s) => s,
+            Err(e) => {
+                log!("accept: {e}");
+                continue;
+            }
+        };
+        let fd = stream.as_raw_fd();
+        let mut cmd = Command::new(&exe);
+        cmd.arg("--client-fd").arg(fd.to_string());
+        unsafe {
+            cmd.pre_exec(move || {
+                // Let the client socket survive exec.
+                let flags = libc::fcntl(fd, libc::F_GETFD);
+                libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC);
+                Ok(())
+            });
+        }
+        match cmd.spawn() {
+            Ok(child) => log!("connection -> app process {}", child.id()),
+            Err(e) => log!("spawn: {e}"),
+        }
+        drop(stream);  // the child owns its copy
+    }
+    std::process::exit(0);
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    match args.get(1).map(String::as_str) {
+        Some("--client-fd") => {
+            let fd: i32 = args.get(2).and_then(|s| s.parse().ok()).expect("--client-fd N");
+            comp::run_client(fd);
+        }
+        Some("--socket") => serve(PathBuf::from(args.get(2).expect("--socket PATH"))),
+        None => serve(default_socket()),
+        Some(other) => {
+            eprintln!("usage: vzcomp [--socket PATH]\n(unknown argument {other})");
+            std::process::exit(2);
+        }
+    }
+}

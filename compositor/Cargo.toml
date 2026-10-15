@@ -1,0 +1,16 @@
+[package]
+name = "vzcomp"
+version = "0.1.0"
+edition = "2021"
+description = "Wayland compositor that turns each Linux app into a native macOS app"
+publish = false
+
+[dependencies]
+smithay = { path = "third_party/smithay", default-features = false, features = ["wayland_frontend"] }
+libc = "0.2"
+
+[build-dependencies]
+cc = "1"
+
+[profile.release]
+debug = 1

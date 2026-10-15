@@ -1,0 +1,91 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 270051a5..7bacbfd8 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -74,7 +74,7 @@ pixman = { version = "0.2.1", features = ["drm-fourcc", "sync"], optional = true
+ aliasable = { version = "0.1.3", optional = true }
+ portable-atomic = { version = "1", features = ["float"] }
+ tracy-client = { version = "0.18.4", default-features = false, optional = true }
+-reis = { version = "0.7.0", features = ["calloop"] }
++reis = { version = "0.7.0", features = ["calloop"], optional = true }
+ glam = { version = "0.33.2", default-features = false, features = ["std"] }
+ 
+ [dev-dependencies]
+@@ -102,7 +102,7 @@ backend_session = []
+ backend_udev = ["udev", "input/udev"]
+ backend_vulkan = ["ash", "scopeguard"]
+ backend_session_libseat = ["backend_session", "libseat"]
+-backend_libei = ["wayland_frontend"]
++backend_libei = ["wayland_frontend", "reis"]
+ desktop = []
+ renderer_gl = ["gl_generator", "backend_egl"]
+ renderer_glow = ["renderer_gl", "glow"]
+diff --git a/src/reexports.rs b/src/reexports.rs
+index 59cc60ff..be20da3b 100644
+--- a/src/reexports.rs
++++ b/src/reexports.rs
+@@ -13,6 +13,7 @@ pub use glow;
+ pub use input;
+ #[cfg(feature = "renderer_pixman")]
+ pub use pixman;
++#[cfg(feature = "backend_libei")]
+ pub use reis;
+ pub use rustix;
+ #[cfg(feature = "tracy_gpu_profiling")]
+diff --git a/src/utils/sealed_file.rs b/src/utils/sealed_file.rs
+index 2fc478f4..71a0d1f5 100644
+--- a/src/utils/sealed_file.rs
++++ b/src/utils/sealed_file.rs
+@@ -51,7 +51,51 @@ impl SealedFile {
+     }
+ 
+     /// Create a `[SealedFile]` with the given binary data.
+-    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "android")))]
++    ///
++    /// macOS has no memfd sealing, and a POSIX shm object can be neither
++    /// `write()`n nor grown after a read-only reopen. Use a private temporary
++    /// file: write it, reopen it read-only, and unlink it before sharing.
++    #[cfg(target_os = "macos")]
++    pub fn with_data(name: &CStr, data: &[u8]) -> Result<Self, std::io::Error> {
++        use std::fs::OpenOptions;
++        use std::os::unix::fs::OpenOptionsExt;
++        use std::sync::atomic::{AtomicU32, Ordering};
++        static COUNTER: AtomicU32 = AtomicU32::new(0);
++
++        let mut n = 0;
++        let (path, mut file) = loop {
++            let nanos = std::time::SystemTime::now()
++                .duration_since(std::time::UNIX_EPOCH)
++                .map(|d| d.subsec_nanos())
++                .unwrap_or(0);
++            let file_name = format!(
++                "{}-{}-{}-{:08x}",
++                name.to_string_lossy(),
++                std::process::id(),
++                COUNTER.fetch_add(1, Ordering::Relaxed),
++                nanos
++            );
++            let path = std::env::temp_dir().join(file_name);
++            match OpenOptions::new().read(true).write(true).create_new(true).mode(0o600).open(&path) {
++                Ok(file) => break (path, file),
++                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && n < 4 => n += 1,
++                Err(e) => return Err(e),
++            }
++        };
++        let result = (|| {
++            file.write_all(data)?;
++            file.flush()?;
++            OpenOptions::new().read(true).open(&path)
++        })();
++        let _ = std::fs::remove_file(&path);
++        Ok(Self {
++            file: result?,
++            size: data.len(),
++        })
++    }
++
++    /// Create a `[SealedFile]` with the given binary data.
++    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "android", target_os = "macos")))]
+     pub fn with_data(name: &CStr, data: &[u8]) -> Result<Self, std::io::Error> {
+         use rand::{Rng, distr::Alphanumeric};
+         use rustix::{
