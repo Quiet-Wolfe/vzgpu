@@ -17,6 +17,7 @@ REPO=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 ROOT="$HOME/Library/Application Support/vzgpu"
 TOOL=$REPO/build/vzgpu-tool
 VZCOMP_APP=$REPO/build/VZGPU\ Debug.app
+VZCOMP_BIN=$VZCOMP_APP/Contents/MacOS/vzcomp
 MAC=02:76:7a:67:70:75   # the VMM's fixed MAC (one guest at a time for now)
 
 die() { echo "vzgpu: $*" >&2; exit 1; }
@@ -33,13 +34,20 @@ distro_info() {
 }
 
 default_distro() { cat "$ROOT/default" 2>/dev/null || echo Fedora; }
-guest_ip() { awk -v mac="1,${MAC#0}" '/ip_address=/{split($0,a,"=");ip=a[2]} $0 ~ "hw_address="mac {print ip}' /var/db/dhcpd_leases 2>/dev/null | tail -1; }
 vm_running() { pgrep -f "vzgpu-venus.* $ROOT/distros/$1\$" >/dev/null; }
+# SSH over the VMM's vsock relay (<vm>/run/ssh.sock -> guest sshd on vsock port 22), not TCP:
+# launcher apps would need Local Network permission for the VM's address, and the VPN can
+# break NAT TCP. The host name is only a label.
+ssh_opts() {
+    local d=$1
+    printf '%s\n' -i "$ROOT/distros/$d/ssh/id_ed25519" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        -o LogLevel=ERROR -o ConnectTimeout=5 -o "ProxyCommand=/usr/bin/nc -U '$ROOT/distros/$d/run/ssh.sock'"
+}
 gssh() {
     local d=$1 user=$2; shift 2
-    local ip; ip=$(guest_ip); [ -n "$ip" ] || return 255
-    ssh -q -i "$ROOT/distros/$d/ssh/id_ed25519" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-        -o ConnectTimeout=3 -o BatchMode=yes "$user@$ip" "$@"
+    [ -S "$ROOT/distros/$d/run/ssh.sock" ] || return 255
+    local opts=(); while IFS= read -r o; do opts+=("$o"); done < <(ssh_opts "$d")
+    ssh -q "${opts[@]}" -o BatchMode=yes "$user@vzgpu-$d" "$@"
 }
 
 ensure_vzcomp() {
@@ -129,7 +137,9 @@ cmd_run() {
     local d; d=$(default_distro)
     ensure_vm "$d"
     # Detach: the app outlives this command, like launching from the Dock.
-    gssh "$d" "$(id -un)" "nohup $(printf '%q ' "$@") >/dev/null 2>&1 &"
+    # Own session, no stdio from SSH: otherwise sshd keeps the channel (and this command) open
+    # for as long as the app runs, and the app dies with it.
+    gssh "$d" "$(id -un)" "setsid -f $(printf '%q ' "$@") </dev/null >/dev/null 2>&1"
 }
 
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
@@ -137,9 +147,10 @@ LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchSe
 xml_escape() { printf '%s' "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'; }
 
 # /Applications/<distro>/<Name>.app for every app the guest exports (guest/vz-export-apps).
-# Each launcher is a background-only stub that runs `vzgpu launch <desktop-id>` and exits; the
-# app itself appears as its own macOS app (vzcomp). Only bundles carrying our marker file are
-# ever replaced or removed.
+# The bundle's executable is a copy of vzcomp: started from Finder, Spotlight, Launchpad or the
+# Dock it claims the app's Wayland connection from the broker and *is* the app (one Dock tile,
+# pinnable; see compositor/src/handoff.rs). Only bundles carrying our marker file are ever
+# replaced or removed.
 cmd_sync_apps() {
     local d; d=$(default_distro)
     local apps="$ROOT/share/apps" dest="/Applications/$d"
@@ -152,7 +163,8 @@ cmd_sync_apps() {
         name=$(head -n1 "$src/name" | tr '/:' '--')
         app="$dest/$name.app"
         keep="$keep$name.app "
-        if [ -f "$app/Contents/Resources/vzgpu-id" ] && [ "$app/Contents/Info.plist" -nt "$src/desktop" ]; then
+        if [ -f "$app/Contents/Resources/vzgpu-id" ] && [ "$app/Contents/Info.plist" -nt "$src/desktop" ] &&
+           ! [ "$VZCOMP_BIN" -nt "$app/Contents/MacOS/vzcomp" ]; then
             continue  # up to date
         fi
         if [ -e "$app" ] && [ ! -f "$app/Contents/Resources/vzgpu-id" ]; then
@@ -162,6 +174,8 @@ cmd_sync_apps() {
         rm -rf "$app"
         mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
         echo "$id" > "$app/Contents/Resources/vzgpu-id"
+        echo "$REPO/tools/vzgpu" > "$app/Contents/Resources/vzgpu-cli"
+        cp "$VZCOMP_BIN" "$app/Contents/MacOS/vzcomp"
         icon=$(ls "$src"icon.* 2>/dev/null | head -1)
         iconkey=""
         if [ -n "$icon" ] && "$TOOL" icns "$icon" "$app/Contents/Resources/AppIcon.icns"; then
@@ -175,16 +189,14 @@ cmd_sync_apps() {
             echo "  <key>CFBundleName</key><string>$(xml_escape "$name")</string>"
             echo "  <key>CFBundleDisplayName</key><string>$(xml_escape "$name")</string>"
             echo "  <key>CFBundleIdentifier</key><string>$bid</string>"
-            echo "  <key>CFBundleExecutable</key><string>launch</string>"
+            echo "  <key>CFBundleExecutable</key><string>vzcomp</string>"
             echo "  <key>CFBundlePackageType</key><string>APPL</string>"
             echo "  <key>CFBundleVersion</key><string>1</string>"
-            echo "  <key>LSBackgroundOnly</key><true/>"
+            echo "  <key>NSHighResolutionCapable</key><true/>"
             echo "  $iconkey"
             echo '</dict></plist>'
         } > "$app/Contents/Info.plist"
-        printf '#!/bin/sh\n# %s on %s (vzgpu launcher)\nexec "%s" launch "%s"\n' \
-            "$name" "$d" "$REPO/tools/vzgpu" "$id" > "$app/Contents/MacOS/launch"
-        chmod 755 "$app/Contents/MacOS/launch"
+        codesign -s - -f "$app" 2>/dev/null || true
         "$LSREGISTER" -f "$app" 2>/dev/null || true
     done
     local a
@@ -225,8 +237,8 @@ ensure_sync_agent() {
 
 cmd_shell() {
     local d; d=$(default_distro); ensure_vm "$d"
-    ssh -i "$ROOT/distros/$d/ssh/id_ed25519" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-        -o LogLevel=ERROR -t "$(id -un)@$(guest_ip)" "$@"
+    local opts=(); while IFS= read -r o; do opts+=("$o"); done < <(ssh_opts "$d")
+    ssh "${opts[@]}" -t "$(id -un)@vzgpu-$d" "$@"
 }
 
 cmd_stop() {

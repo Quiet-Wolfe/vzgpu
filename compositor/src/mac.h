@@ -82,3 +82,4 @@ void vz_cursor_set_named(const char *name);
 void vz_cursor_set_image(const void *pixels, uint32_t width, uint32_t height, uint32_t stride,
                          double scale, double hot_x, double hot_y);
 void vz_cursor_hide(void);
+void vz_activate_pid(int pid);

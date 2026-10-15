@@ -226,3 +226,27 @@ Every app a menu would show (no `NoDisplay`/`Hidden`/`Terminal` entries) gets
 - Known: a launcher pinned in the Dock shows next to the running app's own tile (the window
   belongs to a vzcomp process). Fix later: hand the Wayland connection to the launcher.
 - One guest at a time: `share/apps` is shared, not per distro.
+
+## One Dock tile per app: launcher handoff (2026-10-15)
+
+A launcher bundle's executable is a copy of vzcomp (`compositor/src/handoff.rs`). Opened from
+Finder/Spotlight/Launchpad/the Dock it claims the app's Wayland connection on the broker's
+control socket (`$TMPDIR/vzcomp/control`), starts the app (`vzgpu launch`), receives the
+connection by SCM_RIGHTS and serves it itself: Dock tile, pinning, Cmd-Tab and name are the
+bundle's. The app's own connection always arrives before its short-lived helper connections;
+a claimed connection that closes without a window re-execs the launcher (same pid) to claim
+again. Re-opening a running app is handled by LaunchServices (same bundle); apps started
+elsewhere leave `$TMPDIR/vzcomp/apps/<id>.pid` so the launcher activates them instead.
+Launch to window: 1.4 s with the VM running.
+
+Found on the way:
+- **Local Network privacy.** A new (ad-hoc) app bundle can't reach the VM's 192.168.65.x
+  address: `connect: No route to host`, no prompt in the log. The CLI now reaches the guest's
+  sshd over **vsock**: the VMM has a virtio-socket device and relays `<vm>/run/ssh.sock` to
+  guest port 22, where systemd-ssh-generator listens automatically in a VM (an explicit
+  `systemd.ssh_listen=vsock::22` makes a second, failing unit). Also independent of DHCP and VPN.
+- **Window dragging** never worked for client-drawn windows: `xdg_toplevel.move` arrives after
+  a guest round trip, too late for `performWindowDragWithEvent:` ("Window move completed
+  without beginning"). vzcomp tracks the move itself, like interactive resize.
+- `vzgpu run` must detach the app from SSH (`setsid -f … </dev/null`) or the command never
+  returns. `GDK_DEBUG=no-portals`: without a GNOME session GTK waited seconds for the portal.

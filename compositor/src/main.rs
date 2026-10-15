@@ -13,6 +13,7 @@ macro_rules! log {
 }
 
 mod comp;
+mod handoff;
 mod mac;
 
 use std::os::fd::AsRawFd;
@@ -21,7 +22,7 @@ use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
 
-fn default_socket() -> PathBuf {
+pub fn default_socket() -> PathBuf {
     // The per-user temp dir (what NSTemporaryDirectory returns), not $TMPDIR, which
     // shells and sandboxes override.
     let mut buf = vec![0u8; 1024];
@@ -45,6 +46,7 @@ fn serve(socket: PathBuf) -> ! {
     });
     unsafe { libc::signal(libc::SIGCHLD, libc::SIG_IGN) };  // children are reaped automatically
     log!("listening on {}", socket.display());
+    let claims = handoff::listen(&socket);
     let exe = std::env::current_exe().expect("current_exe");
     for conn in listener.incoming() {
         let stream = match conn {
@@ -55,6 +57,9 @@ fn serve(socket: PathBuf) -> ! {
             }
         };
         let fd = stream.as_raw_fd();
+        if handoff::hand_to_claimant(&claims, fd) {
+            continue;  // a launcher bundle serves it (drop closes our copy)
+        }
         let mut cmd = Command::new(&exe);
         cmd.arg("--client-fd").arg(fd.to_string());
         unsafe {
@@ -82,7 +87,11 @@ fn main() {
             comp::run_client(fd);
         }
         Some("--socket") => serve(PathBuf::from(args.get(2).expect("--socket PATH"))),
-        None => serve(default_socket()),
+        // A launcher bundle's executable (/Applications/<distro>/<App>.app) is this binary.
+        None => match handoff::bundle() {
+            Some(b) => handoff::run_launcher(b, &default_socket()),
+            None => serve(default_socket()),
+        },
         Some(other) => {
             eprintln!("usage: vzcomp [--socket PATH]\n(unknown argument {other})");
             std::process::exit(2);

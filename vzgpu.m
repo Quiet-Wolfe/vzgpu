@@ -12,6 +12,8 @@
 //        VZGPU_TRACE=1  log every control-queue command
 
 #import <Foundation/Foundation.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 #import <Virtualization/Virtualization.h>
 #include <sys/stat.h>
 #include <sys/uio.h>
@@ -717,6 +719,72 @@ static void putHdr(NSMutableData *resp, uint32_t type) {
 }
 @end
 
+// Copies one direction until EOF, then half-closes the other side.
+static void pump(int from, int to) {
+    char buf[65536];
+    for (;;) {
+        ssize_t n = read(from, buf, sizeof buf);
+        if (n <= 0)
+            break;
+        for (ssize_t off = 0; off < n;) {
+            ssize_t w = write(to, buf + off, n - off);
+            if (w <= 0)
+                goto done;
+            off += w;
+        }
+    }
+done:
+    shutdown(to, SHUT_WR);
+}
+
+// <unix socket path> -> guest vsock <port>, one guest connection per accepted client. The CLI
+// reaches the guest's sshd this way (systemd-ssh-generator listens on vsock 22 in a VM): unlike TCP to the VM's
+// address, a launcher app needs no Local Network permission for it.
+static void relay_unix_to_vsock(VZVirtioSocketDevice *dev, NSString *path, uint32_t port) {
+    if (!dev)
+        return;
+    int lfd = socket(AF_UNIX, SOCK_STREAM, 0);
+    struct sockaddr_un sa = {.sun_family = AF_UNIX};
+    strlcpy(sa.sun_path, path.fileSystemRepresentation, sizeof sa.sun_path);
+    unlink(sa.sun_path);
+    if (bind(lfd, (struct sockaddr *)&sa, sizeof sa) || listen(lfd, 16)) {
+        vlog("vsock relay %s: %s", sa.sun_path, strerror(errno));
+        close(lfd);
+        return;
+    }
+    chmod(sa.sun_path, 0600);
+    vlog("vsock relay: %s -> guest port %u", sa.sun_path, port);
+    dispatch_source_t src = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, lfd, 0, dispatch_get_main_queue());
+    dispatch_source_set_event_handler(src, ^{
+        int cfd = accept(lfd, NULL, NULL);
+        if (cfd < 0)
+            return;
+        [dev connectToPort:port completionHandler:^(VZVirtioSocketConnection *conn, NSError *err) {
+            if (!conn) {
+                vlog("vsock connect %u: %s", port, err.localizedDescription.UTF8String);
+                close(cfd);
+                return;
+            }
+            int gfd = dup(conn.fileDescriptor);
+            [conn close];
+            __block int open = 2;
+            void (^finish)(void) = ^{
+                if (__atomic_sub_fetch(&open, 1, __ATOMIC_SEQ_CST) == 0) {
+                    close(cfd);
+                    close(gfd);
+                }
+            };
+            [NSThread detachNewThreadWithBlock:^{ pump(cfd, gfd); finish(); }];
+            [NSThread detachNewThreadWithBlock:^{ pump(gfd, cfd); finish(); }];
+        }];
+    });
+    dispatch_resume(src);
+    static NSMutableArray *keep;  // sources live as long as the VM
+    if (!keep)
+        keep = [NSMutableArray array];
+    [keep addObject:src];
+}
+
 int main(int argc, const char **argv) {
     @autoreleasepool {
         if (argc != 2) {
@@ -791,6 +859,9 @@ int main(int argc, const char **argv) {
         net.attachment = [[VZNATNetworkDeviceAttachment alloc] init];
         net.MACAddress = [[VZMACAddress alloc] initWithString:@"02:76:7a:67:70:75"];  // tools/gssh finds the lease by this
         cfg.networkDevices = @[ net ];
+        // Host <-> guest control channel that isn't networking (no Local Network privacy
+        // prompts, no dependence on DHCP or the VPN): see relay_unix_to_vsock.
+        cfg.socketDevices = @[ [[VZVirtioSocketDeviceConfiguration alloc] init] ];
         cfg.entropyDevices = @[ [[VZVirtioEntropyDeviceConfiguration alloc] init] ];
 
         // Rosetta for Linux as virtiofs tag "rosetta" (mount -t virtiofs rosetta /mnt/rosetta).
@@ -861,6 +932,8 @@ int main(int argc, const char **argv) {
                 exit(1);
             }
             vlog("VM started");
+            relay_unix_to_vsock((VZVirtioSocketDevice *)vm.socketDevices.firstObject,
+                                [run URLByAppendingPathComponent:@"ssh.sock"].path, 22);
         }];
         [[NSRunLoop mainRunLoop] run];
     }

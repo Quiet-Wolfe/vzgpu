@@ -68,4 +68,5 @@ extern "C" {
     pub fn vz_cursor_set_named(name: *const c_char);
     pub fn vz_cursor_set_image(px: *const c_void, w: u32, h: u32, stride: u32, scale: f64, hx: f64, hy: f64);
     pub fn vz_cursor_hide();
+    pub fn vz_activate_pid(pid: i32);
 }

@@ -432,6 +432,17 @@ impl App {
         let name = exported.as_ref().and_then(|e| e.name.clone()).unwrap_or_else(|| app_name(id, title));
         let icon = exported.as_ref().and_then(|e| e.icon.clone()).unwrap_or_default();
         log!("app {id:?} -> name {name:?}, icon {} bytes", icon.len());
+        if let Some(id) = id {
+            crate::handoff::register_running(&crate::default_socket(), id);
+        }
+        if let Some(want) = crate::handoff::expected_app() {
+            // A launcher bundle: name and icon are the bundle's own.
+            if id != Some(want) {
+                log!("launcher for {want} got {id:?} (another app connected first)");
+            }
+            unsafe { mac::vz_app_become_regular(cstr(&name).as_ptr()) };
+            return;
+        }
         let n = cstr(&name);
         unsafe {
             mac::vz_app_become_regular(n.as_ptr());
@@ -1127,6 +1138,9 @@ impl Runtime {
     fn flush(&mut self) {
         let _ = self.display.flush_clients();
         if CLIENT_DISCONNECTED.with(|flag| flag.get()) {
+            if crate::handoff::expected_app().is_some() && !self.app.regular {
+                crate::handoff::reclaim();
+            }
             log!("client gone; exiting");
             unsafe { mac::vz_terminate() };
         }

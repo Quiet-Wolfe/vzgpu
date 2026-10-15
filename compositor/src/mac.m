@@ -101,6 +101,9 @@ static IOSurfaceRef make_surface(uint32_t w, uint32_t h) {
 @property(strong) CALayer *surfaces;  // container for surface layers, offset by the surface origin
 @property(strong) CADisplayLink *link;
 @property uint32_t resizeEdges;
+@property BOOL moving;  // client-requested move (xdg_toplevel.move) in progress
+@property NSPoint moveStartOrigin;
+@property NSPoint moveStartMouse;
 @property NSRect resizeStartFrame;
 @property NSPoint resizeStartMouse;
 @property(strong) NSEvent *lastMouseDown;
@@ -204,6 +207,17 @@ void vz_release_modifiers(uint64_t window) {
     return ev;
 }
 - (void)motion:(NSEvent *)e {
+    if (self.moving) {
+        NSPoint m = NSEvent.mouseLocation;
+        NSRect f = self.window.frame;
+        f.origin = NSMakePoint(self.moveStartOrigin.x + m.x - self.moveStartMouse.x,
+                               self.moveStartOrigin.y + m.y - self.moveStartMouse.y);
+        // Like a titled window: the top edge can't go under the menu bar.
+        NSRect v = (self.window.screen ?: NSScreen.mainScreen).visibleFrame;
+        f.origin.y = MIN(f.origin.y, NSMaxY(v) - f.size.height);
+        [self.window setFrameOrigin:f.origin];
+        return;
+    }
     if (self.resizeEdges) {
         [self continueResize];
         return;
@@ -243,6 +257,10 @@ void vz_release_modifiers(uint64_t window) {
     [self button:e code:0x110 state:1];
 }
 - (void)mouseUp:(NSEvent *)e {
+    if (self.moving) {
+        self.moving = NO;
+        return;
+    }
     if (self.resizeEdges) {
         self.resizeEdges = 0;
         return;
@@ -569,9 +587,17 @@ void vz_window_minimize(uint64_t window) {
 }
 
 void vz_window_begin_move(uint64_t window) {
+    // The request arrives after a round trip through the guest, too late for
+    // performWindowDragWithEvent: (AppKit: "Window move completed without beginning").
+    // Track the drag ourselves, like interactive resize.
     VZWindowCtl *c = ctl_for(window);
-    if (c.view.lastMouseDown && (NSEvent.pressedMouseButtons & 1))
-        [c.window performWindowDragWithEvent:c.view.lastMouseDown];
+    if (!c || c.fullscreen || !(NSEvent.pressedMouseButtons & 1))
+        return;
+    c.view.moving = YES;
+    c.view.moveStartOrigin = c.window.frame.origin;
+    c.view.moveStartMouse = c.view.lastMouseDown
+        ? [c.window convertPointToScreen:c.view.lastMouseDown.locationInWindow]
+        : NSEvent.mouseLocation;
 }
 
 void vz_window_begin_resize(uint64_t window, uint32_t edges) {
@@ -1120,4 +1146,9 @@ void vz_run(void) {
 
 void vz_terminate(void) {
     exit(0);
+}
+
+void vz_activate_pid(int pid) {
+    NSRunningApplication *app = [NSRunningApplication runningApplicationWithProcessIdentifier:pid];
+    [app activateWithOptions:NSApplicationActivateAllWindows];
 }
