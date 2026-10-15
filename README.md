@@ -346,6 +346,12 @@ Dynamically linked x86 programs outside containers still need x86 libraries in t
 `steam.sh` hardcodes the 32-bit x86 client; the native one is `steamrtarm64/steam` (with a
 native `steamwebhelper`; Fedora only lacks `ibus-libs`). It needs `~/.steam/steam` and
 `~/.steam/root` → `~/.local/share/Steam` (steam.sh normally makes them). Run with
-`x11-run --id steam ~/.local/share/Steam/steamrtarm64/steam`: it starts and self-updates
-(a ~584 MB update was downloading). No window seen yet. Note: Steam uploads crash minidumps
-to Valve on its own.
+`x11-run --id steam steam-arm64` (`guest/steam/steam-arm64` restarts Steam while it exits
+with 42, its "restart me" after a self-update, like steam.sh). Extra Fedora packages: gtk2,
+openal-soft, ibus-libs, mesa-dri-drivers. `guest/steam/steam.desktop` + the icon from Valve's
+steam launcher tarball make `/Applications/Fedora/Steam.app` (users' `~/.local/share/
+applications` and icons are exported too now; entries are written atomically).
+**Blocked:** Steam's vgui needs GLX (`glXChooseVisual failed`). Xwayland only provides GLX
+with glamor, which `-shm` (sommelier's mode) excludes, and our guest GPU is Vulkan-only.
+Options: glamor on zink-over-Venus or llvmpipe (needs dma-buf buffers through cross-domain),
+or a virgl GL path. Note: Steam uploads crash minidumps to Valve on its own.

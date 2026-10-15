@@ -61,6 +61,12 @@ if [ -n "$dev" ]; then
     esac
 fi
 
+# Watch the user's own applications too (systemd paths take no wildcards).
+mkdir -p /etc/systemd/system/vz-export-apps.path.d /home/$USERNAME/.local/share/applications
+chown "$USERNAME:" /home/$USERNAME/.local /home/$USERNAME/.local/share /home/$USERNAME/.local/share/applications 2>/dev/null || true
+printf '[Path]\nPathChanged=/home/%s/.local/share/applications\n' "$USERNAME" \
+    > /etc/systemd/system/vz-export-apps.path.d/user.conf
+
 systemctl daemon-reload
 systemctl enable --now mnt-vzgpu.mount vz-export-apps.path
 systemctl restart systemd-binfmt.service  # apply the overrides now (FEX's own install restarted it too)

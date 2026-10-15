@@ -1,0 +1,14 @@
+#!/bin/sh
+# steam-arm64 [args] — start Valve's native ARM64 Steam client (fetch-steam-arm64.py), doing
+# what steam.sh does for the x86 client: the ~/.steam data links and restarting while Steam
+# exits with 42 (its "restart me", e.g. after a self-update). Run via x11-run (Steam is X11).
+STEAMDIR=${STEAMDIR:-$HOME/.local/share/Steam}
+mkdir -p "$HOME/.steam"
+ln -sfn "$STEAMDIR" "$HOME/.steam/steam"
+ln -sfn "$STEAMDIR" "$HOME/.steam/root"
+cd "$STEAMDIR" || exit 1
+while :; do
+    "$STEAMDIR/steamrtarm64/steam" "$@"
+    rc=$?
+    [ "$rc" = 42 ] || exit "$rc"
+done

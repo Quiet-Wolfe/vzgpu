@@ -10,9 +10,9 @@ mkdir -p "$SHARE"
 mountpoint -q "$SHARE" || mount -t virtiofs vzgpu "$SHARE" 2>/dev/null || { echo "vz-export-apps: no vzgpu share" >&2; exit 1; }
 mkdir -p "$SHARE/apps"
 
-find_icon() {  # $1 = Icon= value
+find_icon() {  # $1 = Icon= value, $2 = the user's ~/.local/share for per-user apps
     case "$1" in /*) [ -f "$1" ] && { echo "$1"; return; } ;; esac
-    for base in /usr/share/icons/hicolor /usr/share/icons/Adwaita; do
+    for base in ${2:+$2/icons/hicolor} /usr/share/icons/hicolor /usr/share/icons/Adwaita; do
         for f in "$base/scalable/apps/$1.svg" "$base/512x512/apps/$1.png" "$base/256x256/apps/$1.png" \
                  "$base/128x128/apps/$1.png" "$base/96x96/apps/$1.png" "$base/64x64/apps/$1.png" \
                  "$base/48x48/apps/$1.png"; do
@@ -29,7 +29,9 @@ entry() {  # $1 = key, $2 = .desktop file: value in the [Desktop Entry] group
 }
 
 keep=" "
-for desktop in /usr/share/applications/*.desktop /usr/local/share/applications/*.desktop; do
+# System apps, then apps users installed for themselves (e.g. Steam, AppImages).
+for desktop in /usr/share/applications/*.desktop /usr/local/share/applications/*.desktop \
+               /home/*/.local/share/applications/*.desktop; do
     [ -f "$desktop" ] || continue
     # Only what a menu would show: no hidden entries, no terminal programs.
     [ "$(entry NoDisplay "$desktop")" = true ] && continue
@@ -40,17 +42,21 @@ for desktop in /usr/share/applications/*.desktop /usr/local/share/applications/*
     keep="$keep$id "
     dir="$SHARE/apps/$id"
     [ "$dir/desktop" -nt "$desktop" ] && continue  # already exported and unchanged
-    mkdir -p "$dir"
-    rm -f "$dir/icon.svg" "$dir/icon.png"
-    file=$(find_icon "$(entry Icon "$desktop")")
-    [ -n "$file" ] && cp "$file" "$dir/icon.${file##*.}"
+    # Built aside and renamed into place: the Mac's watcher fires on the first change and must
+    # never see a half-written app.
+    tmp="$SHARE/apps/.new-$id"
+    rm -rf "$tmp" && mkdir -p "$tmp"
+    case "$desktop" in /home/*) userdata=${desktop%/applications/*} ;; *) userdata= ;; esac
+    file=$(find_icon "$(entry Icon "$desktop")" "$userdata")
+    [ -n "$file" ] && cp "$file" "$tmp/icon.${file##*.}"
     name=$(entry Name "$desktop")
-    printf '%s\n' "${name:-$id}" > "$dir/name"
-    printf '%s\n' "$desktop" > "$dir/desktop"
+    printf '%s\n' "${name:-$id}" > "$tmp/name"
+    printf '%s\n' "$desktop" > "$tmp/desktop"
+    rm -rf "$dir" && mv "$tmp" "$dir"
 done
 
 # Apps that were uninstalled (or became hidden) disappear from the Mac too.
-for dir in "$SHARE"/apps/*/; do
+for dir in "$SHARE"/apps/*/; do  # (.new-* temporaries are dotfiles: not matched)
     id=$(basename "$dir")
     case "$keep" in *" $id "*) ;; *) rm -rf "$dir" ;; esac
 done
