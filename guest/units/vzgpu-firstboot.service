@@ -1,0 +1,8 @@
+[Unit]
+Description=vzgpu first boot setup
+ConditionPathExists=!/var/lib/vzgpu/installed
+Wants=network-online.target
+After=network-online.target
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'mkdir -p /mnt/vzgpu;mountpoint -q /mnt/vzgpu||mount -t virtiofs vzgpu /mnt/vzgpu;bash /mnt/vzgpu/guest/install-guest.sh "$(cat /mnt/vzgpu/user)"&&mkdir -p /var/lib/vzgpu&&touch /var/lib/vzgpu/installed'

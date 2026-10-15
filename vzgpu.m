@@ -732,6 +732,20 @@ int main(int argc, const char **argv) {
         NSString *cmdline = @"console=hvc0 root=UUID=96ff3c27-158a-4f65-a5a8-2c3344757f97 rootflags=subvol=root rw "
                              "systemd.unit=multi-user.target systemd.debug_shell=hvc0 "
                              "systemd.mask=serial-getty@hvc0.service systemd.firstboot=off";
+        // First boot of a stock distro image: systemd >= 256 turns a systemd.extra-unit.*
+        // credential into a unit, so the guest's setup (guest/install-guest.sh, run from the
+        // vzgpu share) needs no cloud-init and no edits to the disk. Once done, the unit's
+        // condition (/var/lib/vzgpu/installed) keeps it from running again.
+        NSURL *support = [NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory
+                                                             inDomains:NSUserDomainMask].firstObject;
+        NSData *firstboot = [NSData dataWithContentsOfURL:
+            [support URLByAppendingPathComponent:@"vzgpu/share/guest/units/vzgpu-firstboot.service"]];
+        NSString *firstbootArgs = firstboot
+            ? [NSString stringWithFormat:@" systemd.set_credential_binary=systemd.extra-unit.vzgpu-firstboot.service:%@"
+                                          " systemd.wants=vzgpu-firstboot.service",
+                                         [firstboot base64EncodedStringWithOptions:0]]
+            : @"";
+
         // VZGPU_KERNEL=<name> boots <vmdir>/<name>/Image instead of <vmdir>/Image. A kernel dir
         // may carry its own command line (cmdline) and initramfs.img; our own kernel has
         // everything built in and needs no initramfs, so root= must be a PARTUUID or device.
@@ -742,6 +756,7 @@ int main(int argc, const char **argv) {
             cmdline = [kcmd stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
         if (getenv("VZGPU_CMDLINE"))
             cmdline = @(getenv("VZGPU_CMDLINE"));
+        cmdline = [cmdline stringByAppendingString:firstbootArgs];
         // SSH: hand <vmdir>/ssh/id_ed25519.pub to systemd as the root authorized_keys
         // credential and pull in sshd, so the guest disk needs no edits.
         NSData *pub = [NSData dataWithContentsOfURL:[dir URLByAppendingPathComponent:@"ssh/id_ed25519.pub"]];

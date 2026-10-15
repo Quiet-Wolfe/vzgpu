@@ -32,6 +32,20 @@ if [ -s /root/.ssh/authorized_keys ]; then
     install -m 600 -o "$USERNAME" -g "$USERNAME" /root/.ssh/authorized_keys /home/$USERNAME/.ssh/
 fi
 
+# Grow the root partition and filesystem to the disk (the installer makes the disk image
+# bigger than the distro's). systemd-growfs can't: without an initramfs, root is /dev/root.
+part=$(sed -n 's/.*root=PARTUUID=\([^ ]*\).*/\1/p' /proc/cmdline)
+dev=${part:+$(blkid -t PARTUUID="$part" -o device | head -1)}
+if [ -n "$dev" ]; then
+    disk=/dev/$(lsblk -no PKNAME "$dev"); num=$(cat /sys/class/block/${dev#/dev/}/partition)
+    growpart "$disk" "$num" >/dev/null 2>&1 || true
+    case $(findmnt -no FSTYPE /) in
+        btrfs) btrfs filesystem resize max / >/dev/null ;;
+        ext4) resize2fs "$dev" >/dev/null ;;
+        xfs) xfs_growfs / >/dev/null ;;
+    esac
+fi
+
 systemctl daemon-reload
 systemctl enable --now mnt-vzgpu.mount vz-export-apps.path
 systemctl start vz-export-apps.service || true
