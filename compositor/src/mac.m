@@ -1,8 +1,8 @@
 // macOS side of vzcomp. See mac.h.
 //
 // Each Wayland surface is a CALayer whose contents is an IOSurface. On every commit
-// the pixels are copied into an IOSurface from a small per-layer pool that WindowServer
-// is not currently using (IOSurfaceIsInUse), so a frame on screen is never written to.
+// the pixels are copied into a new, immutable IOSurface. Core Animation retains it
+// through presentation; neither pending nor displayed frames are ever overwritten.
 // The Wayland buffer can then be released immediately.
 
 #import <AppKit/AppKit.h>
@@ -70,8 +70,13 @@ static uint32_t evdev_from_mac(unsigned short k) {
 
 @interface VZLayer : NSObject
 @property(strong) CALayer *layer;
-@property(strong) NSMutableArray *pool;  // IOSurfaceRef (bridged)
-@property IOSurfaceRef current;
+@property uint64_t window;
+@property(strong) id pendingContents;
+@property CGRect pendingFrame;
+@property CGFloat pendingScale;
+@property BOOL pendingOpaque;
+@property int pendingZ;
+@property BOOL pixelsDirty, frameDirty;
 @end
 @implementation VZLayer
 @end
@@ -118,9 +123,36 @@ static IOSurfaceRef make_surface(uint32_t w, uint32_t h) {
 @property(strong) VZView *view;
 @property BOOL programmaticResize;
 @property BOOL fullscreen;
+@property CGPoint pendingOrigin;
+@property NSSize pendingSize;
+@property BOOL originDirty, sizeDirty;
 @property NSRect restoreFrame;  // borderless maximize: frame to restore
 @end
 
+static void present_window(uint64_t window);
+
+// Modifier state as the client last saw it. Reconciled against every key event's own
+// flags: synthetic keystrokes and app switches don't always produce flagsChanged, which
+// would otherwise leave Ctrl/Alt missing or stuck.
+static NSEventModifierFlags g_sent_mods;
+static void sync_mods(uint64_t window, NSEventModifierFlags want) {
+    static const struct { NSEventModifierFlags flag; uint32_t code; } mods[] = {
+        {NSEventModifierFlagShift, 42}, {NSEventModifierFlagControl, 29},
+        {NSEventModifierFlagOption, 56}, {NSEventModifierFlagCommand, 125},
+    };
+    for (size_t i = 0; i < sizeof mods / sizeof *mods; i++) {
+        BOOL have = (g_sent_mods & mods[i].flag) != 0, need = (want & mods[i].flag) != 0;
+        if (have == need)
+            continue;
+        struct vz_event ev = {.type = VZ_EV_KEY, .window = window, .code = mods[i].code, .state = need,
+                              .time_ms = vz_now_ms()};
+        emit(ev);
+        g_sent_mods ^= mods[i].flag;
+    }
+}
+void vz_release_modifiers(uint64_t window) {
+    sync_mods(window, 0);
+}
 @implementation VZView
 - (BOOL)isFlipped {
     return YES;
@@ -150,6 +182,7 @@ static IOSurfaceRef make_surface(uint32_t w, uint32_t h) {
     [g_cursor ?: NSCursor.arrowCursor set];
 }
 - (void)tick:(CADisplayLink *)link {
+    present_window(self.ctl.handle);
     struct vz_event ev = {.type = VZ_EV_FRAME, .window = self.ctl.handle, .time_ms = vz_now_ms()};
     emit(ev);
 }
@@ -232,6 +265,7 @@ static IOSurfaceRef make_surface(uint32_t w, uint32_t h) {
         emit(ev);
 }
 - (void)key:(NSEvent *)e state:(uint32_t)state {
+    sync_mods(self.ctl.handle, e.modifierFlags);
     uint32_t code = evdev_from_mac(e.keyCode);
     if (!code)
         return;
@@ -249,6 +283,10 @@ static IOSurfaceRef make_surface(uint32_t w, uint32_t h) {
 - (void)flagsChanged:(NSEvent *)e {
     NSEventModifierFlags f = e.modifierFlags;
     NSEventModifierFlags mask = 0;
+    if (e.keyCode != 0x39) {  // everything but caps lock
+        sync_mods(self.ctl.handle, f);
+        return;
+    }
     switch (e.keyCode) {
     case 0x38: case 0x3C: mask = NSEventModifierFlagShift; break;
     case 0x3B: case 0x3E: mask = NSEventModifierFlagControl; break;
@@ -295,6 +333,7 @@ static IOSurfaceRef make_surface(uint32_t w, uint32_t h) {
     self.view.link.paused = NO;
     if (self.programmaticResize)
         return;
+    self.sizeDirty = NO; // a newer native resize supersedes a staged client size
     NSSize s = self.view.bounds.size;
     struct vz_event ev = {.type = VZ_EV_RESIZE, .window = self.handle, .width = s.width, .height = s.height};
     emit(ev);
@@ -304,6 +343,7 @@ static IOSurfaceRef make_surface(uint32_t w, uint32_t h) {
     emit(ev);
 }
 - (void)windowDidResignKey:(NSNotification *)n {
+    vz_release_modifiers(self.handle);
     struct vz_event ev = {.type = VZ_EV_FOCUS, .window = self.handle, .state = 0};
     emit(ev);
 }
@@ -418,9 +458,9 @@ void vz_window_set_title(uint64_t window, const char *title) {
     ctl_for(window).window.title = @(title ?: "");
 }
 
-void vz_window_set_content_size(uint64_t window, double width, double height) {
+static void apply_content_size(uint64_t window, double width, double height) {
     VZWindowCtl *c = ctl_for(window);
-    if (!c || c.fullscreen || width <= 0 || height <= 0)
+    if (!c || c.fullscreen || c.view.inLiveResize || c.view.resizeEdges || width <= 0 || height <= 0)
         return;
     NSSize cur = c.view.bounds.size;
     if (fabs(cur.width - width) < 0.5 && fabs(cur.height - height) < 0.5)
@@ -436,6 +476,12 @@ void vz_window_set_content_size(uint64_t window, double width, double height) {
     c.programmaticResize = NO;
 }
 
+void vz_window_set_content_size(uint64_t window, double width, double height) {
+    VZWindowCtl *c = ctl_for(window);
+    c.pendingSize = NSMakeSize(width, height);
+    c.sizeDirty = YES;
+}
+
 void vz_window_set_min_size(uint64_t window, double width, double height) {
     VZWindowCtl *c = ctl_for(window);
     c.window.contentMinSize = NSMakeSize(MAX(width, 1), MAX(height, 1));
@@ -445,6 +491,7 @@ void vz_window_show(uint64_t window) {
     VZWindowCtl *c = ctl_for(window);
     if (!c || c.window.visible)
         return;
+    present_window(window); // initial map has no running display link yet
     if (c.window.isPopup) {
         [c.window orderFront:nil];
     } else {
@@ -515,10 +562,8 @@ void vz_window_destroy(uint64_t window) {
 
 void vz_window_set_surface_origin(uint64_t window, double x, double y) {
     VZWindowCtl *c = ctl_for(window);
-    [CATransaction begin];
-    [CATransaction setDisableActions:YES];
-    c.view.surfaces.position = CGPointMake(x, y);
-    [CATransaction commit];
+    c.pendingOrigin = CGPointMake(x, y);
+    c.originDirty = YES;
 }
 
 #pragma mark layer API
@@ -528,11 +573,11 @@ uint64_t vz_layer_new(uint64_t window) {
     if (!c)
         return 0;
     VZLayer *l = [VZLayer new];
+    l.window = window;
     l.layer = [CALayer layer];
     l.layer.anchorPoint = CGPointZero;
     l.layer.contentsGravity = kCAGravityTopLeft;
     l.layer.actions = @{@"contents" : [NSNull null], @"position" : [NSNull null], @"bounds" : [NSNull null]};
-    l.pool = [NSMutableArray array];
     [c.view.surfaces addSublayer:l.layer];
     return put(l);
 }
@@ -544,11 +589,9 @@ static VZLayer *layer_for(uint64_t h) {
 
 void vz_layer_set_frame(uint64_t layer, double x, double y, double width, double height, int z) {
     VZLayer *l = layer_for(layer);
-    [CATransaction begin];
-    [CATransaction setDisableActions:YES];
-    l.layer.frame = CGRectMake(x, y, width, height);
-    l.layer.zPosition = z;
-    [CATransaction commit];
+    l.pendingFrame = CGRectMake(x, y, width, height);
+    l.pendingZ = z;
+    l.frameDirty = YES;
 }
 
 void vz_layer_set_pixels(uint64_t layer, const void *pixels, uint32_t width, uint32_t height, uint32_t stride,
@@ -556,30 +599,12 @@ void vz_layer_set_pixels(uint64_t layer, const void *pixels, uint32_t width, uin
     VZLayer *l = layer_for(layer);
     if (!l || !width || !height)
         return;
-    IOSurfaceRef target = NULL;
-    for (id o in l.pool) {
-        IOSurfaceRef s = (__bridge IOSurfaceRef)o;
-        if (s == l.current || IOSurfaceIsInUse(s))
-            continue;
-        if (IOSurfaceGetWidth(s) != width || IOSurfaceGetHeight(s) != height)
-            continue;
-        target = s;
-        break;
-    }
-    if (!target) {
-        // Drop free surfaces of the wrong size, then grow the pool.
-        NSMutableArray *keep = [NSMutableArray array];
-        for (id o in l.pool) {
-            IOSurfaceRef s = (__bridge IOSurfaceRef)o;
-            if (s == l.current || IOSurfaceIsInUse(s))
-                [keep addObject:o];
-        }
-        l.pool = keep;
-        target = make_surface(width, height);
-        if (!target)
-            return;
-        [l.pool addObject:(__bridge_transfer id)target];
-    }
+    // IsInUse only reports consumers that have acquired the surface. It may still
+    // be false for contents queued in a Core Animation transaction. Reusing that
+    // storage during a burst of commits corrupts earlier, still-pending frames.
+    IOSurfaceRef target = make_surface(width, height);
+    if (!target)
+        return;
     IOSurfaceLock(target, 0, NULL);
     uint8_t *dst = IOSurfaceGetBaseAddress(target);
     size_t dstride = IOSurfaceGetBytesPerRow(target);
@@ -593,25 +618,96 @@ void vz_layer_set_pixels(uint64_t layer, const void *pixels, uint32_t width, uin
         }
     }
     IOSurfaceUnlock(target, 0, NULL);
-    l.current = target;
-    [CATransaction begin];
-    [CATransaction setDisableActions:YES];
-    l.layer.contents = (__bridge id)target;
-    l.layer.contentsScale = scale;
-    l.layer.opaque = opaque != 0;
-    [CATransaction commit];
+    if (getenv("VZCOMP_SNAPSHOT") && !opaque && width > 700 && height > 700) {
+        size_t transparent = 0, samples = 0;
+        for (uint32_t y = 60; y + 60 < height; y += 16)
+            for (uint32_t x = 60; x + 60 < width; x += 16) {
+                samples++;
+                transparent += src[(size_t)y * stride + x * 4 + 3] < 128;
+            }
+        static unsigned captured;
+        if (samples && transparent * 2 > samples && captured < 8) {
+            NSString *file = [NSString stringWithFormat:@"%s/bad-%u-%ux%u-s%zu.raw",
+                getenv("VZCOMP_SNAPSHOT"), captured++, width, height, dstride];
+            [NSFileManager.defaultManager createDirectoryAtPath:@(getenv("VZCOMP_SNAPSHOT"))
+                withIntermediateDirectories:YES attributes:nil error:nil];
+            [[NSData dataWithBytes:dst length:dstride * height] writeToFile:file atomically:YES];
+            NSLog(@"transparent source frame %zu/%zu samples -> %@", transparent, samples, file);
+        }
+    }
+    l.pendingContents = (__bridge_transfer id)target;
+    l.pendingScale = scale;
+    l.pendingOpaque = opaque != 0;
+    l.pixelsDirty = YES;
 }
 
 void vz_layer_clear(uint64_t layer) {
     VZLayer *l = layer_for(layer);
-    l.layer.contents = nil;
-    l.current = NULL;
+    l.pendingContents = nil;
+    l.pixelsDirty = YES;
 }
 
 void vz_layer_destroy(uint64_t layer) {
     VZLayer *l = layer_for(layer);
     [l.layer removeFromSuperlayer];
     [g_objects removeObjectForKey:@(layer)];
+}
+
+// Publish the newest complete buffer + geometry together, once per display tick.
+// Wayland commits only stage state; intermediate resize responses never reach CA.
+static BOOL belongs_to_window(uint64_t candidate, uint64_t window) {
+    if (!window || candidate == window)
+        return YES;
+    NSWindow *ancestor = ctl_for(candidate).window.parentWindow;
+    NSWindow *root = ctl_for(window).window;
+    while (ancestor) {
+        if (ancestor == root)
+            return YES;
+        ancestor = ancestor.parentWindow;
+    }
+    return NO;
+}
+
+static void present_window(uint64_t window) {
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    NSArray *objects = g_objects.allValues;
+    for (id obj in objects) {
+        if (![obj isKindOfClass:VZWindowCtl.class])
+            continue;
+        VZWindowCtl *c = obj;
+        if (!belongs_to_window(c.handle, window))
+            continue;
+        if (c.sizeDirty) {
+            c.sizeDirty = NO;
+            apply_content_size(c.handle, c.pendingSize.width, c.pendingSize.height);
+        }
+        if (c.originDirty) {
+            c.view.surfaces.position = c.pendingOrigin;
+            c.originDirty = NO;
+        }
+    }
+    for (id obj in objects) {
+        if (![obj isKindOfClass:VZLayer.class])
+            continue;
+        VZLayer *l = obj;
+        if (!belongs_to_window(l.window, window))
+            continue;
+        if (l.pixelsDirty) {
+            l.layer.contents = l.pendingContents;
+            l.layer.contentsScale = l.pendingScale;
+            l.layer.opaque = l.pendingOpaque;
+            l.pendingContents = nil;
+            l.pixelsDirty = NO;
+        }
+        if (l.frameDirty) {
+            l.layer.frame = l.pendingFrame;
+            l.layer.zPosition = l.pendingZ;
+            l.frameDirty = NO;
+        }
+    }
+    [CATransaction commit];
+    [CATransaction flush];
 }
 
 #pragma mark cursor
@@ -728,10 +824,75 @@ static void build_menu(NSString *name) {
     NSApp.mainMenu = bar;
 }
 
+// Capture the currently submitted buffers on demand, without per-frame disk I/O.
+// VZCOMP_SNAPSHOT=/path, then SIGUSR1: raw BGRA + layer/window geometry.
+static dispatch_source_t g_snapshot_source, g_resize_source;
+static void snapshot_layers(NSString *directory) {
+    [NSFileManager.defaultManager createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil];
+    NSMutableArray *metadata = [NSMutableArray array];
+    for (NSNumber *handle in g_objects) {
+        id obj = g_objects[handle];
+        if (![obj isKindOfClass:VZLayer.class])
+            continue;
+        CALayer *layer = ((VZLayer *)obj).layer;
+        IOSurfaceRef surface = (__bridge IOSurfaceRef)layer.contents;
+        if (!surface)
+            continue;
+        size_t width = IOSurfaceGetWidth(surface), height = IOSurfaceGetHeight(surface);
+        size_t stride = IOSurfaceGetBytesPerRow(surface);
+        NSString *file = [NSString stringWithFormat:@"layer-%@-%zux%zu-s%zu.raw", handle, width, height, stride];
+        IOSurfaceLock(surface, kIOSurfaceLockReadOnly, NULL);
+        NSData *data = [NSData dataWithBytes:IOSurfaceGetBaseAddress(surface) length:stride * height];
+        [data writeToFile:[directory stringByAppendingPathComponent:file] atomically:YES];
+        IOSurfaceUnlock(surface, kIOSurfaceLockReadOnly, NULL);
+        [metadata addObject:@{@"file":file, @"frame":NSStringFromRect(layer.frame),
+            @"bounds":NSStringFromRect(layer.bounds), @"scale":@(layer.contentsScale),
+            @"parentFrame":NSStringFromRect(layer.superlayer.frame),
+            @"contentsRect":NSStringFromRect(layer.contentsRect)}];
+    }
+    NSData *json = [NSJSONSerialization dataWithJSONObject:metadata options:NSJSONWritingPrettyPrinted error:nil];
+    [json writeToFile:[directory stringByAppendingPathComponent:@"layers.json"] atomically:YES];
+}
+
 void vz_init(vz_event_cb cb, void *ctx) {
     g_cb = cb;
     g_ctx = ctx;
     g_objects = [NSMutableDictionary dictionary];
+    const char *snapshot = getenv("VZCOMP_SNAPSHOT");
+    if (snapshot) {
+        NSString *directory = @(snapshot);
+        signal(SIGUSR1, SIG_IGN);
+        g_snapshot_source = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGUSR1, 0, dispatch_get_main_queue());
+        dispatch_source_set_event_handler(g_snapshot_source, ^{ snapshot_layers(directory); });
+        dispatch_resume(g_snapshot_source);
+        // Diagnostic native-resize workload, through the same delegate path as a drag.
+        signal(SIGUSR2, SIG_IGN);
+        g_resize_source = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGUSR2, 0, dispatch_get_main_queue());
+        dispatch_source_set_event_handler(g_resize_source, ^{
+            for (id obj in g_objects.allValues) {
+                if (![obj isKindOfClass:VZWindowCtl.class] || ((VZWindowCtl *)obj).window.isPopup)
+                    continue;
+                VZWindowCtl *ctl = obj;
+                __block unsigned tick = 0;
+                ctl.view.resizeEdges = 8;
+                NSTimer *timer = [NSTimer timerWithTimeInterval:1.0 / 60 repeats:YES block:^(NSTimer *timer) {
+                    if (tick < 180) {
+                        NSRect frame = ctl.window.frame;
+                        frame.size.width = tick % 2 ? 369 + tick % 23 : 1450 - tick % 31;
+                        [ctl.window setFrame:frame display:YES];
+                    } else if (tick == 180) {
+                        ctl.view.resizeEdges = 0;
+                    } else if (tick == 240) {
+                        [timer invalidate];
+                        snapshot_layers(directory);
+                    }
+                    tick++;
+                }];
+                [NSRunLoop.mainRunLoop addTimer:timer forMode:NSRunLoopCommonModes];
+            }
+        });
+        dispatch_resume(g_resize_source);
+    }
     [NSApplication sharedApplication];
     g_delegate = [VZAppDelegate new];
     NSApp.delegate = g_delegate;
@@ -798,11 +959,18 @@ struct fd_watch {
     void *ctx;
 };
 
+static CFFileDescriptorRef g_wayland_fd;
+
+void vz_rearm_fd(void) {
+    CFFileDescriptorEnableCallBacks(g_wayland_fd, kCFFileDescriptorReadCallBack);
+}
+
 static void fd_callout(CFFileDescriptorRef f, CFOptionFlags flags, void *info) {
+    (void)f;
     (void)flags;
     struct fd_watch *w = info;
     w->cb(w->ctx);
-    CFFileDescriptorEnableCallBacks(f, kCFFileDescriptorReadCallBack);
+    // Rust rearms after dispatch, which may be deferred during a nested AppKit loop.
 }
 
 void vz_watch_fd(int fd, vz_fd_cb cb, void *ctx) {
@@ -811,6 +979,7 @@ void vz_watch_fd(int fd, vz_fd_cb cb, void *ctx) {
     w->ctx = ctx;
     CFFileDescriptorContext c = {.info = w};
     CFFileDescriptorRef f = CFFileDescriptorCreate(NULL, fd, false, fd_callout, &c);
+    g_wayland_fd = f;
     CFFileDescriptorEnableCallBacks(f, kCFFileDescriptorReadCallBack);
     CFRunLoopSourceRef src = CFFileDescriptorCreateRunLoopSource(NULL, f, 0);
     CFRunLoopAddSource(CFRunLoopGetMain(), src, kCFRunLoopCommonModes);

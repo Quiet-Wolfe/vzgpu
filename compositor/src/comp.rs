@@ -7,7 +7,8 @@
 //! is on screen. Frame callbacks fire on the window's display link, i.e. at the
 //! display's refresh rate.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+use std::cell::{Cell, RefCell};
 use std::ffi::{c_void, CString};
 use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::net::UnixStream;
@@ -71,6 +72,7 @@ struct Win {
     origin: (i32, i32),   // xdg window geometry origin inside the root surface
     shown: bool,
     want_fullscreen: bool,
+    resize_serial: Option<Serial>, // newest host size, until a root commit acknowledges it
 }
 
 struct SurfaceInfo {
@@ -103,7 +105,6 @@ pub struct App {
     focused: Option<u64>,
     cursor_surface: Option<WlSurface>,
     regular: bool,
-    pub disconnected: bool,
 }
 
 #[derive(Default)]
@@ -115,11 +116,7 @@ impl ClientData for ClientState {
     fn initialized(&self, _: ClientId) {}
     fn disconnected(&self, _: ClientId, reason: DisconnectReason) {
         log!("client disconnected: {reason:?}");
-        unsafe {
-            if let Some(rt) = RUNTIME.as_mut() {
-                rt.app.disconnected = true;
-            }
-        }
+        CLIENT_DISCONNECTED.with(|flag| flag.set(true));
     }
 }
 
@@ -191,7 +188,6 @@ impl App {
             focused: None,
             cursor_surface: None,
             regular: false,
-            disconnected: false,
         }
     }
 
@@ -234,7 +230,7 @@ impl App {
             }
         }
 
-        let handle = self.wins.get(&root_id).map(|w| w.handle).unwrap_or(0);
+        let mut handle = self.wins.get(&root_id).map(|w| w.handle).unwrap_or(0);
         let (buffer, scale, callbacks) = with_states(surface, |states| {
             let mut guard = states.cached_state.get::<SurfaceAttributes>();
             let attrs = guard.current();
@@ -243,7 +239,7 @@ impl App {
 
         match buffer {
             Some(BufferAssignment::NewBuffer(buffer)) => {
-                let handle = if handle == 0 { self.map_window(&root_id) } else { handle };
+                if handle == 0 { handle = self.map_window(&root_id); }
                 if handle != 0 {
                     self.upload(surface, handle, &buffer, scale);
                 }
@@ -267,7 +263,7 @@ impl App {
         }
 
         if self.wins.contains_key(&root_id) {
-            self.layout(&root);
+            self.layout(&root, surface == &root);
         }
     }
 
@@ -314,9 +310,18 @@ impl App {
                 );
             }
             if let Some(dir) = std::env::var_os("VZCOMP_DUMP") {
-                static DUMPED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-                let n = DUMPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                if n % 25 == 0 && n < 400 {
+                // Dump the first 4 frames after every buffer size change.
+                use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+                static DUMPED: AtomicU32 = AtomicU32::new(0);
+                static LAST: AtomicU64 = AtomicU64::new(0);
+                static LEFT: AtomicU32 = AtomicU32::new(0);
+                let n = DUMPED.fetch_add(1, Ordering::Relaxed);
+                let key = ((data.width as u64) << 32) | data.height as u64;
+                if LAST.swap(key, Ordering::Relaxed) != key {
+                    LEFT.store(4, Ordering::Relaxed);
+                }
+                if LEFT.load(Ordering::Relaxed) > 0 {
+                    LEFT.fetch_sub(1, Ordering::Relaxed);
                     let bytes = unsafe { std::slice::from_raw_parts(ptr.add(data.offset as usize), (data.stride * data.height) as usize) };
                     let path = std::path::Path::new(&dir).join(format!("vzcomp-{}-{n}-{}x{}-s{}.raw", std::process::id(), data.width, data.height, data.stride));
                     let _ = std::fs::write(&path, bytes);
@@ -431,7 +436,7 @@ impl App {
     }
 
     /// Positions every surface layer of a window and sizes the window to the xdg geometry.
-    fn layout(&mut self, root: &WlSurface) {
+    fn layout(&mut self, root: &WlSurface, root_commit: bool) {
         let root_id = root.id();
         let Some(win) = self.wins.get(&root_id) else { return };
         let handle = win.handle;
@@ -491,6 +496,14 @@ impl App {
         unsafe { mac::vz_window_set_surface_origin(handle, -geo.loc.x as f64, -geo.loc.y as f64) };
         match &win.role {
             Role::Toplevel(t) => unsafe {
+                // Only a root commit responding to the latest host configure may
+                // change the native size. Subsurface commits and older responses
+                // must not undo a newer resize or replace its pending size.
+                let committed = t.with_cached_state(|s| s.last_acked.as_ref().map(|c| c.serial));
+                if !root_commit || !resize_caught_up(win.resize_serial, committed) {
+                    return;
+                }
+                win.resize_serial = None;
                 // The client may size itself (e.g. GTK growing for a new mode). Adopt its
                 // size so later configures (focus changes) don't push a stale size back
                 // and start a resize ping-pong. Fullscreen/maximized sizes stay ours.
@@ -623,7 +636,11 @@ impl App {
                 }
             });
             if t.is_initial_configure_sent() {
-                t.send_pending_configure();
+                if let Some(serial) = t.send_pending_configure() {
+                    if let Some(win) = self.wins.get_mut(&t.wl_surface().id()) {
+                        win.resize_serial = Some(serial);
+                    }
+                }
             }
         }
     }
@@ -724,6 +741,39 @@ impl App {
     }
 }
 
+// Serial comparisons use Wayland's wrapping order, including across u32::MAX.
+fn resize_caught_up(requested: Option<Serial>, committed: Option<Serial>) -> bool {
+    requested.map_or(true, |want| committed.is_some_and(|got| got >= want))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nested_native_callback_is_deferred() {
+        DISPATCHING.with(|active| active.set(true));
+        let event: mac::VzEvent = unsafe { std::mem::zeroed() };
+        dispatch(PendingEvent::Native(event));
+        EVENTS.with(|events| {
+            assert!(matches!(events.borrow_mut().pop_front(), Some(PendingEvent::Native(_))));
+            assert!(events.borrow().is_empty());
+        });
+        DISPATCHING.with(|active| active.set(false));
+    }
+
+    #[test]
+    fn resize_waits_for_latest_committed_configure() {
+        assert!(resize_caught_up(None, None));
+        assert!(!resize_caught_up(Some(20.into()), None));
+        assert!(!resize_caught_up(Some(20.into()), Some(19.into())));
+        assert!(resize_caught_up(Some(20.into()), Some(20.into())));
+        assert!(resize_caught_up(Some(20.into()), Some(21.into())));
+        assert!(!resize_caught_up(Some(1.into()), Some(u32::MAX.into())));
+        assert!(resize_caught_up(Some(u32::MAX.into()), Some(1.into())));
+    }
+}
+
 /// "org.gnome.Calculator" -> "Calculator"; falls back to the title.
 fn app_name(app_id: Option<&str>, title: Option<&str>) -> String {
     if let Some(id) = app_id.filter(|s| !s.is_empty()) {
@@ -770,7 +820,7 @@ impl XdgShellHandler for App {
         let root = surface.wl_surface().clone();
         self.wins.insert(
             root.id(),
-            Win { role: Role::Toplevel(surface), root, handle: 0, parent: None, origin: (0, 0), shown: false, want_fullscreen: false },
+            Win { role: Role::Toplevel(surface), root, handle: 0, parent: None, origin: (0, 0), shown: false, want_fullscreen: false, resize_serial: None },
         );
     }
 
@@ -782,7 +832,7 @@ impl XdgShellHandler for App {
         let root = surface.wl_surface().clone();
         self.wins.insert(
             root.id(),
-            Win { role: Role::Popup(surface), root, handle: 0, parent: None, origin: (0, 0), shown: false, want_fullscreen: false },
+            Win { role: Role::Popup(surface), root, handle: 0, parent: None, origin: (0, 0), shown: false, want_fullscreen: false, resize_serial: None },
         );
     }
 
@@ -982,24 +1032,54 @@ fn runtime() -> &'static mut Runtime {
     unsafe { &mut *RUNTIME }
 }
 
+// AppKit can synchronously call delegates while Rust is laying out a window,
+// and can run a nested event loop during a native drag. Defer those callbacks
+// until the active operation returns instead of aliasing &mut Runtime/App.
+enum PendingEvent {
+    Native(mac::VzEvent),
+    Readable,
+}
+
+thread_local! {
+    static DISPATCHING: Cell<bool> = const { Cell::new(false) };
+    static EVENTS: RefCell<VecDeque<PendingEvent>> = const { RefCell::new(VecDeque::new()) };
+    static CLIENT_DISCONNECTED: Cell<bool> = const { Cell::new(false) };
+}
+
+fn dispatch(event: PendingEvent) {
+    EVENTS.with(|events| events.borrow_mut().push_back(event));
+    if DISPATCHING.with(|active| active.replace(true)) {
+        return;
+    }
+    loop {
+        let Some(event) = EVENTS.with(|events| events.borrow_mut().pop_front()) else { break };
+        let rt = runtime();
+        match event {
+            PendingEvent::Native(ev) => rt.app.handle_event(&ev),
+            PendingEvent::Readable => {
+                if let Err(e) = rt.display.dispatch_clients(&mut rt.app) {
+                    log!("dispatch: {e}");
+                }
+                unsafe { mac::vz_rearm_fd() };
+            }
+        }
+        rt.flush();
+    }
+    DISPATCHING.with(|active| active.set(false));
+}
+
 extern "C" fn on_event(_ctx: *mut c_void, ev: *const mac::VzEvent) {
-    let rt = runtime();
-    rt.app.handle_event(unsafe { &*ev });
-    rt.flush();
+    dispatch(PendingEvent::Native(unsafe { *ev }));
 }
 
 extern "C" fn on_wayland_readable(_ctx: *mut c_void) {
-    let rt = runtime();
-    if let Err(e) = rt.display.dispatch_clients(&mut rt.app) {
-        log!("dispatch: {e}");
-    }
-    rt.flush();
+    dispatch(PendingEvent::Readable);
 }
 
 impl Runtime {
     fn flush(&mut self) {
         let _ = self.display.flush_clients();
-        if self.app.disconnected {
+        if CLIENT_DISCONNECTED.with(|flag| flag.get()) {
             log!("client gone; exiting");
             unsafe { mac::vz_terminate() };
         }

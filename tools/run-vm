@@ -1,0 +1,21 @@
+#!/bin/bash
+# Run the VM with the Vulkan stack verified against rapid GTK drawing/resizing.
+set -euo pipefail
+repo=$(cd "$(dirname "$0")/.." && pwd)
+vm=${1:-"$HOME/VMs/fedora45-vzgpu"}
+sdk=${VZGPU_VULKAN_SDK:-"$HOME/VulkanSDK/1.4.363.0"}
+icd="$sdk/macOS/share/vulkan/icd.d/libkosmickrisp_icd.json"
+if [[ ! -f "$icd" ]]; then
+    echo "Missing tested KosmicKrisp ICD: $icd (override VZGPU_VULKAN_SDK)" >&2
+    exit 1
+fi
+binary=${VZGPU_BINARY:-"$repo/build/vzgpu-venus.fixed"}
+if [[ ! -x "$binary" ]]; then
+    echo "Missing VM binary: $binary (build it or set VZGPU_BINARY)" >&2
+    exit 1
+fi
+export VK_DRIVER_FILES="$icd"
+export DYLD_LIBRARY_PATH="$repo/third_party/virgl-prefix/lib:$sdk/macOS/lib:/opt/homebrew/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+export VZGPU_WAYLAND_SOCKET=${VZGPU_WAYLAND_SOCKET:-"$(getconf DARWIN_USER_TEMP_DIR)vzcomp/wayland-0"}
+mkdir -p "$vm/run"
+exec "$binary" "$vm" 2>"$vm/run/vmm.log"

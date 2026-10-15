@@ -37,6 +37,7 @@ typedef void (*vz_fd_cb)(void *ctx);
 
 void vz_init(vz_event_cb cb, void *ctx);
 void vz_watch_fd(int fd, vz_fd_cb cb, void *ctx);
+void vz_rearm_fd(void);
 void vz_run(void);
 void vz_terminate(void);
 uint32_t vz_now_ms(void);
@@ -70,7 +71,7 @@ void vz_window_set_surface_origin(uint64_t window, double x, double y);
 uint64_t vz_layer_new(uint64_t window);
 void vz_layer_set_frame(uint64_t layer, double x, double y, double width, double height, int z);
 // Copies pixels (BGRA/BGRX little-endian, i.e. wl_shm ARGB8888/XRGB8888) into an
-// IOSurface that the window server is not using, and shows it. `scale` = buffer scale.
+// immutable IOSurface and shows it. `scale` = buffer scale.
 void vz_layer_set_pixels(uint64_t layer, const void *pixels, uint32_t width, uint32_t height,
                          uint32_t stride, int opaque, double scale);
 void vz_layer_clear(uint64_t layer);

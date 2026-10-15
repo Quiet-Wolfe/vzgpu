@@ -15,6 +15,7 @@ pub const EV_FRAME: u32 = 10;
 pub const EV_QUIT: u32 = 11;
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct VzEvent {
     pub kind: u32,
     pub window: u64,
@@ -38,6 +39,7 @@ pub type FdCb = extern "C" fn(*mut c_void);
 extern "C" {
     pub fn vz_init(cb: EventCb, ctx: *mut c_void);
     pub fn vz_watch_fd(fd: i32, cb: FdCb, ctx: *mut c_void);
+    pub fn vz_rearm_fd();
     pub fn vz_run();
     pub fn vz_terminate() -> !;
     pub fn vz_now_ms() -> u32;

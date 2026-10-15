@@ -85,6 +85,25 @@ needs no alignment patches; `guest/wl-run` starts sommelier and runs a client.
 - The hvc0 serial console stops accepting input after a while (VZ stops draining
   the FIFO; cause not found). Use SSH.
 
+## GTK drawing and resize fixes (2026-10-15)
+
+The old KosmicKrisp from SDK 1.4.350.0 produced striped/transparent GTK Vulkan
+frames during rapid resizing; the corruption was present in the incoming SHM
+pixels before macOS presentation. Cairo did not reproduce it. The same Vulkan
+workload with SDK 1.4.363.0's KosmicKrisp no longer produced those anomalous
+frames, and interactive testing confirmed the drawing problem resolved.
+
+Use `tools/run-vm` for the tested configuration: SDK 1.4.363.0's loader and
+KosmicKrisp ICD, the local virglrenderer prefix, and `build/vzgpu-venus.fixed`.
+The local renderer build addresses the separate context-destroy crash. Set
+`VZGPU_VULKAN_SDK` or `VZGPU_BINARY` to explicitly test a different stack.
+Start `compositor/target/release/vzcomp` first. An already-running VM must stop
+before another is launched; the script does not restart the running VM.
+
+The compositor stages pixels and geometry and publishes them together on display
+ticks. Its native and Wayland regression checks are documented in
+`compositor/tests/README.md`.
+
 ## Running
 
 VM dir (not in git) `~/VMs/fedora45-vzgpu`: `Image` (zboot payload of the Fedora

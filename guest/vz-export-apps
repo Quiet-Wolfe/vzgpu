@@ -1,0 +1,38 @@
+#!/bin/sh
+# vz-export-apps — publish installed apps' names and icons to the Mac (vzcomp Dock icons).
+# Writes <share>/apps/<desktop-id>/{name,icon.svg|icon.png} for every .desktop file.
+# The share is the VMM's virtiofs tag "vzgpu" (~/Library/Application Support/vzgpu/share).
+SHARE=${VZ_SHARE:-/mnt/vzgpu}
+mkdir -p "$SHARE"
+mountpoint -q "$SHARE" || mount -t virtiofs vzgpu "$SHARE" 2>/dev/null || { echo "vz-export-apps: no vzgpu share" >&2; exit 1; }
+mkdir -p "$SHARE/apps"
+
+find_icon() {  # $1 = Icon= value
+    case "$1" in /*) [ -f "$1" ] && { echo "$1"; return; } ;; esac
+    for base in /usr/share/icons/hicolor /usr/share/icons/Adwaita; do
+        for f in "$base/scalable/apps/$1.svg" "$base/512x512/apps/$1.png" "$base/256x256/apps/$1.png" \
+                 "$base/128x128/apps/$1.png" "$base/96x96/apps/$1.png" "$base/64x64/apps/$1.png" \
+                 "$base/48x48/apps/$1.png"; do
+            [ -f "$f" ] && { echo "$f"; return; }
+        done
+    done
+    for f in "/usr/share/pixmaps/$1.svg" "/usr/share/pixmaps/$1.png"; do
+        [ -f "$f" ] && { echo "$f"; return; }
+    done
+}
+
+for desktop in /usr/share/applications/*.desktop /usr/local/share/applications/*.desktop; do
+    [ -f "$desktop" ] || continue
+    id=$(basename "$desktop" .desktop)
+    dir="$SHARE/apps/$id"
+    [ "$dir/name" -nt "$desktop" ] && continue  # already exported and unchanged
+    name=$(sed -n '/^\[Desktop Entry\]/,/^\[/{s/^Name=//p}' "$desktop" | head -n1)
+    icon=$(sed -n '/^\[Desktop Entry\]/,/^\[/{s/^Icon=//p}' "$desktop" | head -n1)
+    mkdir -p "$dir"
+    rm -f "$dir/icon.svg" "$dir/icon.png"
+    file=$(find_icon "$icon")
+    if [ -n "$file" ]; then
+        cp "$file" "$dir/icon.${file##*.}"
+    fi
+    printf '%s\n' "${name:-$id}" > "$dir/name"
+done

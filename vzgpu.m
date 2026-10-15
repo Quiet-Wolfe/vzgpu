@@ -780,6 +780,18 @@ int main(int argc, const char **argv) {
             else
                 vlog("rosetta share: %s", err.description.UTF8String);
         }
+        // Host <-> guest exchange folder (virtiofs tag "vzgpu"): the guest exports app
+        // icons and names here for vzcomp's Dock icons.
+        {
+            NSURL *support = [[NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory
+                                                                   inDomains:NSUserDomainMask] firstObject];
+            NSURL *share = [support URLByAppendingPathComponent:@"vzgpu/share" isDirectory:YES];
+            [NSFileManager.defaultManager createDirectoryAtURL:share withIntermediateDirectories:YES attributes:nil error:nil];
+            VZVirtioFileSystemDeviceConfiguration *fs = [[VZVirtioFileSystemDeviceConfiguration alloc] initWithTag:@"vzgpu"];
+            fs.share = [[VZSingleDirectoryShare alloc] initWithDirectory:[[VZSharedDirectory alloc] initWithURL:share readOnly:NO]];
+            cfg.directorySharingDevices = [cfg.directorySharingDevices arrayByAddingObject:fs];
+            vlog("exchange folder: %s", share.path.UTF8String);
+        }
 
         // Console: input from a FIFO (opened O_RDWR so it never sees EOF), output to a log.
         NSString *fifo = [run URLByAppendingPathComponent:@"in.fifo"].path;
