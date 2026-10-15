@@ -47,6 +47,7 @@ cat > "$C/Resources/vulkan/icd.d/kosmickrisp_icd.json" <<'EOF'
 EOF
 cp -RL "$BREW/share/X11/xkb" "$C/Resources/xkb"
 cp -R "$REPO/guest" "$C/Resources/guest"
+cp "$REPO/LICENSE" "$REPO/THIRD_PARTY_NOTICES.md" "$C/Resources/"
 
 # Every non-system library reference -> @rpath (= Contents/Frameworks).
 fix() {  # $1 = Mach-O file
