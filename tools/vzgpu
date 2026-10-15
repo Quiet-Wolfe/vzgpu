@@ -283,6 +283,16 @@ cmd_list() {
     done
 }
 
+# From vzgpu.app, keep `vzgpu` on the PATH pointing at this copy (/usr/local/bin is on every
+# macOS shell's default PATH; ~/.local/bin if that isn't writable).
+link_cli() {
+    [ -n "${APP:-}" ] || return 0
+    local dir=/usr/local/bin
+    [ -w "$dir" ] || { dir=$HOME/.local/bin; mkdir -p "$dir"; }
+    [ "$(readlink "$dir/vzgpu" 2>/dev/null)" = "$CLI" ] || ln -sf "$CLI" "$dir/vzgpu" 2>/dev/null || true
+}
+link_cli
+
 case "${1:-}" in
     install) shift; cmd_install "$@" ;;
     run) shift; cmd_run "$@" ;;

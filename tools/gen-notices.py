@@ -79,8 +79,9 @@ def main():
             "`kernel/build-kernel.sh` (`kernel/fedora-*.config`, `kernel/lsmod.txt`)",
             "- Used as: the guest kernel `Image.xz` in the GitHub release `kernel-7.2.11-vzgpu`",
             "- License: GPL-2.0 WITH Linux-syscall-note",
-            "- Corresponding source: https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.2.11.tar.xz "
-            "plus the patch and build script in this repository, which reproduce the binary.", "",
+            "- Corresponding source: attached to the same release (the unmodified kernel.org "
+            "`linux-7.2.11.tar.xz`, the patch, `build-kernel.sh` and its config inputs), which "
+            "reproduce the binary.", "",
             "```", text("linux.COPYING"), "```", "",
             "```", text("linux.GPL-2.0"), "```", "",
             "```", text("linux.syscall-note"), "```", ""]
