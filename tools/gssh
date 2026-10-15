@@ -7,4 +7,4 @@ ip=$(awk '/ip_address=/{split($0,a,"=");ip=a[2]} /hw_address=1,2:76:7a:67:70:75/
 opts=()
 while [[ "$1" == -* ]]; do opts+=("$1"); case "$1" in -[RLDiop]) opts+=("$2"); shift;; esac; shift; done
 exec ssh -q "${opts[@]}" -i "$VM/ssh/id_ed25519" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-    -o ConnectTimeout=5 -o BatchMode=yes root@"$ip" "$@"
+    -o ConnectTimeout=5 -o BatchMode=yes "${VZGPU_USER:-root}@$ip" "$@"

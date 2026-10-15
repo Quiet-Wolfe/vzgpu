@@ -1,0 +1,10 @@
+# Re-export whenever packages add or change .desktop files.
+[Unit]
+Description=Watch for installed apps
+
+[Path]
+PathChanged=/usr/share/applications
+PathChanged=/usr/local/share/applications
+
+[Install]
+WantedBy=multi-user.target

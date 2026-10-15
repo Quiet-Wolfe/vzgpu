@@ -1,6 +1,6 @@
 --- sommelier-compositor.cc.orig	2026-10-15 16:02:51.312105600 +0000
-+++ sommelier-compositor.cc	2026-10-15 16:02:51.321601934 +0000
-@@ -678,6 +678,20 @@
++++ sommelier-compositor.cc	2026-10-15 16:13:45.760121244 +0000
+@@ -678,6 +678,50 @@
                                                host->ctx);
      }
  
@@ -14,7 +14,37 @@
 +        full.x2 = (int32_t)(host->contents_width * host->contents_scale);
 +        full.y2 = (int32_t)(host->contents_height * host->contents_scale);
 +      }
++      // Diagnostic: SOMMELIER_DUMP=dir dumps client (src) and host (dst) buffers for
++      // the first 4 frames after every size change.
++      static int dump_left = 0, dump_n = 0;
++      static uint32_t last_w = 0, last_h = 0;
++      const char* dump_dir = getenv("SOMMELIER_DUMP");
++      if (dump_dir && (host->contents_width != last_w || host->contents_height != last_h)) {
++        last_w = host->contents_width;
++        last_h = host->contents_height;
++        dump_left = 4;
++      }
++      bool dump = dump_dir && dump_left > 0;
++      auto dump_buf = [&](const char* tag, uint8_t* base, size_t off, size_t stride) {
++        char path[512];
++        snprintf(path, sizeof path, "%s/s%04d-%s-%ux%u-s%zu.raw", dump_dir, dump_n, tag,
++                 host->contents_width, host->contents_height, stride);
++        FILE* f = fopen(path, "wb");
++        if (f) {
++          fwrite(base + off, 1, stride * host->contents_height, f);
++          fclose(f);
++        }
++      };
++      if (dump)
++        dump_buf("src", (uint8_t*)host->contents_shm_mmap->addr, host->contents_shm_mmap->offset[0],
++                 host->contents_shm_mmap->stride[0]);
 +      copy_damaged_rect(host, &full, host->contents_shaped, 1.0, 1.0, 0.0, 0.0);
++      if (dump) {
++        dump_buf("dst", (uint8_t*)host->current_buffer->mmap->addr, host->current_buffer->mmap->offset[0],
++                 host->current_buffer->mmap->stride[0]);
++        dump_left--;
++        dump_n++;
++      }
 +      pixman_region32_clear(&host->current_buffer->surface_damage);
 +      pixman_region32_clear(&host->current_buffer->buffer_damage);
 +    }

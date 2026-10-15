@@ -1,0 +1,12 @@
+# The Mac's ~/Library/Application Support/vzgpu/share (VMM virtiofs tag "vzgpu").
+[Unit]
+Description=vzgpu host share
+
+[Mount]
+What=vzgpu
+Where=/mnt/vzgpu
+Type=virtiofs
+Options=nofail
+
+[Install]
+WantedBy=multi-user.target

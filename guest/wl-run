@@ -4,7 +4,7 @@
 export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
 export WAYLAND_DISPLAY=wayland-0
 mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
-SOMMELIER=${SOMMELIER:-/root/sommelier/build/sommelier}
+SOMMELIER=${SOMMELIER:-$(command -v sommelier || echo /root/sommelier/build/sommelier)}
 if [ ! -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ] || ! pgrep -x sommelier >/dev/null; then
     rm -f "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY.lock"
     # SOMMELIER_FULL_COPY (guest/sommelier-full-copy.patch): copy whole frames into the host

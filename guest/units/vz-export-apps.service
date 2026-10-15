@@ -1,0 +1,12 @@
+[Unit]
+Description=Publish installed apps' names and icons to the Mac (Dock icons)
+Requires=mnt-vzgpu.mount
+After=mnt-vzgpu.mount
+
+[Service]
+Type=oneshot
+Environment=VZ_SHARE=/mnt/vzgpu
+ExecStart=/usr/local/bin/vz-export-apps
+
+[Install]
+WantedBy=multi-user.target

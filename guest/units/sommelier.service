@@ -1,0 +1,14 @@
+# User service: the Wayland bridge from guest apps to the Mac's vzcomp (cross-domain channel).
+[Unit]
+Description=sommelier: guest Wayland apps as macOS windows
+
+[Service]
+# Copy whole frames to the host buffer (guest/sommelier-full-copy.patch).
+Environment=SOMMELIER_FULL_COPY=1
+ExecStartPre=/bin/rm -f %t/wayland-0 %t/wayland-0.lock
+ExecStart=/usr/local/bin/sommelier --virtgpu-channel --socket=wayland-0 --parent --no-exit-with-child
+Restart=on-failure
+RestartSec=1
+
+[Install]
+WantedBy=default.target
