@@ -1,0 +1,23 @@
+--- sommelier-compositor.cc.orig	2026-10-15 16:02:51.312105600 +0000
++++ sommelier-compositor.cc	2026-10-15 16:02:51.321601934 +0000
+@@ -678,6 +678,20 @@
+                                               host->ctx);
+     }
+ 
++    // vzgpu: copy the whole frame. The damage-only path leaves stale/garbage
++    // regions in the host buffer (seen with GTK4 at buffer scale 2), and the
++    // host compositor copies the full buffer anyway.
++    if (getenv("SOMMELIER_FULL_COPY")) {
++      pixman_box32_t full = {0, 0, (int32_t)host->contents_width,
++                             (int32_t)host->contents_height};
++      if (host->contents_scale != 1.0) {
++        full.x2 = (int32_t)(host->contents_width * host->contents_scale);
++        full.y2 = (int32_t)(host->contents_height * host->contents_scale);
++      }
++      copy_damaged_rect(host, &full, host->contents_shaped, 1.0, 1.0, 0.0, 0.0);
++      pixman_region32_clear(&host->current_buffer->surface_damage);
++      pixman_region32_clear(&host->current_buffer->buffer_damage);
++    }
+     // Copy damaged regions (surface-relative coordinates).
+     int n;
+     pixman_box32_t* rect =

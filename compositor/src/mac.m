@@ -118,6 +118,7 @@ static IOSurfaceRef make_surface(uint32_t w, uint32_t h) {
 @property(strong) VZView *view;
 @property BOOL programmaticResize;
 @property BOOL fullscreen;
+@property NSRect restoreFrame;  // borderless maximize: frame to restore
 @end
 
 @implementation VZView
@@ -308,6 +309,8 @@ static IOSurfaceRef make_surface(uint32_t w, uint32_t h) {
 }
 - (void)fullscreenChanged:(BOOL)on {
     self.fullscreen = on;
+    if (!(self.window.styleMask & NSWindowStyleMaskTitled))
+        self.view.layer.cornerRadius = on ? 0 : 12;
     NSSize s = self.view.bounds.size;
     struct vz_event ev = {.type = VZ_EV_FULLSCREEN, .window = self.handle, .state = on, .width = s.width,
                           .height = s.height};
@@ -353,6 +356,12 @@ static VZWindowCtl *make_window(BOOL decorated, BOOL popup, NSRect content) {
     v.layer = [CALayer layer];
     v.layer.masksToBounds = YES;
     v.layerContentsRedrawPolicy = NSViewLayerContentsRedrawNever;
+    if (!decorated && !popup) {
+        // Client-drawn decorations (GTK/libadwaita): round the window like the client
+        // does, so the macOS shadow follows the client's corners.
+        v.layer.cornerRadius = 12;
+        v.layer.cornerCurve = kCACornerCurveContinuous;
+    }
     v.surfaces = [CALayer layer];
     v.surfaces.anchorPoint = CGPointZero;
     v.surfaces.geometryFlipped = NO;
@@ -453,8 +462,24 @@ void vz_window_set_fullscreen(uint64_t window, int fullscreen) {
 
 void vz_window_set_maximized(uint64_t window, int maximized) {
     VZWindowCtl *c = ctl_for(window);
-    if (c && c.window.zoomed != (maximized != 0))
-        [c.window zoom:nil];
+    if (!c || c.fullscreen)
+        return;
+    if (c.window.styleMask & NSWindowStyleMaskTitled) {
+        if (c.window.zoomed != (maximized != 0))
+            [c.window zoom:nil];
+        return;
+    }
+    // Borderless (client-drawn decorations): zoom to the visible screen area ourselves,
+    // with the usual window-resize animation, and remember where to go back to.
+    c.view.layer.cornerRadius = maximized ? 0 : 12;
+    if (maximized && NSIsEmptyRect(c.restoreFrame)) {
+        c.restoreFrame = c.window.frame;
+        [c.window setFrame:c.window.screen.visibleFrame display:YES animate:YES];
+    } else if (!maximized && !NSIsEmptyRect(c.restoreFrame)) {
+        NSRect r = c.restoreFrame;
+        c.restoreFrame = NSZeroRect;
+        [c.window setFrame:r display:YES animate:YES];
+    }
 }
 
 void vz_window_minimize(uint64_t window) {

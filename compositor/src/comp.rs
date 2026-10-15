@@ -53,6 +53,10 @@ use smithay::wayland::shm::{with_buffer_contents, ShmHandler, ShmState};
 
 use crate::mac;
 
+extern "C" {
+    fn sys_dcache_flush(start: *mut c_void, len: usize);
+}
+
 #[derive(Clone)]
 enum Role {
     Toplevel(ToplevelSurface),
@@ -294,6 +298,10 @@ impl App {
             if need > len {
                 return None;
             }
+            if std::env::var_os("VZCOMP_FLUSH").is_some() {
+                // Experiment: drop stale cache lines for memory the guest wrote via the VM.
+                unsafe { sys_dcache_flush(ptr.add(data.offset as usize) as *mut c_void, data.stride as usize * data.height as usize) };
+            }
             unsafe {
                 mac::vz_layer_set_pixels(
                     layer,
@@ -304,6 +312,18 @@ impl App {
                     opaque as i32,
                     scale as f64,
                 );
+            }
+            if let Some(dir) = std::env::var_os("VZCOMP_DUMP") {
+                static DUMPED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+                let n = DUMPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if n % 25 == 0 && n < 400 {
+                    let bytes = unsafe { std::slice::from_raw_parts(ptr.add(data.offset as usize), (data.stride * data.height) as usize) };
+                    let path = std::path::Path::new(&dir).join(format!("vzcomp-{}-{n}-{}x{}-s{}.raw", std::process::id(), data.width, data.height, data.stride));
+                    let _ = std::fs::write(&path, bytes);
+                }
+            }
+            if std::env::var_os("VZCOMP_DEBUG").is_some() {
+                log!("upload {:?} {}x{} stride {} offset {} fmt {:?} scale {} pool {}", surface.id(), data.width, data.height, data.stride, data.offset, data.format, scale, len);
             }
             Some((data.width as f64 / scale as f64, data.height as f64 / scale as f64))
         });
@@ -331,14 +351,22 @@ impl App {
         });
         if let Some(BufferAssignment::NewBuffer(buffer)) = buffer {
             let _ = with_buffer_contents(&buffer, |ptr, _len, data| unsafe {
+                if std::env::var_os("VZCOMP_DEBUG").is_some() {
+                    log!("cursor {}x{} scale {} hotspot {:?}", data.width, data.height, scale, hotspot);
+                }
+                // Clients behind sommelier send 1x cursors (32 px at scale 1) even on a 2x
+                // display, which macOS would show at twice the native cursor size. Show
+                // cursor pixels at the display's scale; the hotspot scales with them.
+                let shown = (scale as f64).max(self.scale);
+                let k = scale as f64 / shown;
                 mac::vz_cursor_set_image(
                     ptr.add(data.offset as usize) as *const c_void,
                     data.width as u32,
                     data.height as u32,
                     data.stride as u32,
-                    scale as f64,
-                    hotspot.x as f64,
-                    hotspot.y as f64,
+                    shown,
+                    hotspot.x as f64 * k,
+                    hotspot.y as f64 * k,
                 );
             });
             buffer.release();
@@ -455,11 +483,24 @@ impl App {
         let geo = geometry.unwrap_or_else(|| {
             Rectangle::new((0, 0).into(), (root_size.0 as i32, root_size.1 as i32).into())
         });
+        if std::env::var_os("VZCOMP_DEBUG").is_some() {
+            log!("layout {:?} geometry {:?} root {:?} min {:?}", root_id, geometry, root_size, min_size);
+        }
         let win = self.wins.get_mut(&root_id).unwrap();
         win.origin = (geo.loc.x, geo.loc.y);
         unsafe { mac::vz_window_set_surface_origin(handle, -geo.loc.x as f64, -geo.loc.y as f64) };
         match &win.role {
-            Role::Toplevel(_) => unsafe {
+            Role::Toplevel(t) => unsafe {
+                // The client may size itself (e.g. GTK growing for a new mode). Adopt its
+                // size so later configures (focus changes) don't push a stale size back
+                // and start a resize ping-pong. Fullscreen/maximized sizes stay ours.
+                t.with_pending_state(|s| {
+                    let ours = s.states.contains(xdg_toplevel::State::Fullscreen)
+                        || s.states.contains(xdg_toplevel::State::Maximized);
+                    if !ours && s.size.is_some() && geo.size.w > 0 && geo.size.h > 0 {
+                        s.size = Some(geo.size);
+                    }
+                });
                 if min_size.w > 0 || min_size.h > 0 {
                     mac::vz_window_set_min_size(handle, min_size.w as f64, min_size.h as f64);
                 }
@@ -727,7 +768,6 @@ impl XdgShellHandler for App {
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
         let root = surface.wl_surface().clone();
-        surface.with_pending_state(|s| s.decoration_mode = Some(DecorationMode::ServerSide));
         self.wins.insert(
             root.id(),
             Win { role: Role::Toplevel(surface), root, handle: 0, parent: None, origin: (0, 0), shown: false, want_fullscreen: false },
@@ -807,6 +847,7 @@ impl XdgShellHandler for App {
                 s.states.set(xdg_toplevel::State::Maximized);
             });
             unsafe { mac::vz_window_set_maximized(h, 1) };
+            surface.send_pending_configure();
         }
     }
 
@@ -816,6 +857,7 @@ impl XdgShellHandler for App {
                 s.states.unset(xdg_toplevel::State::Maximized);
             });
             unsafe { mac::vz_window_set_maximized(h, 0) };
+            surface.send_pending_configure();
         }
     }
 

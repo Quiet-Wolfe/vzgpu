@@ -7,7 +7,9 @@ mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
 SOMMELIER=${SOMMELIER:-/root/sommelier/build/sommelier}
 if [ ! -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ] || ! pgrep -x sommelier >/dev/null; then
     rm -f "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY.lock"
-    nohup "$SOMMELIER" --virtgpu-channel --socket="$WAYLAND_DISPLAY" --parent --no-exit-with-child \
+    # SOMMELIER_FULL_COPY (guest/sommelier-full-copy.patch): copy whole frames into the host
+    # buffer. sommelier's damage-only copy leaves stale/garbage regions (GTK4 at scale 2).
+    SOMMELIER_FULL_COPY=1 nohup "$SOMMELIER" --virtgpu-channel --socket="$WAYLAND_DISPLAY" --parent --no-exit-with-child \
         >"$XDG_RUNTIME_DIR/sommelier.log" 2>&1 &
     for i in 1 2 3 4 5 6 7 8 9 10; do [ -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ] && break; sleep 0.2; done
 fi
