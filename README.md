@@ -301,3 +301,22 @@ Gotcha: amd64 containers died with SIGSEGV (exit 139) until the mount got an SEL
 virtiofs has none, and container_t may not execute unlabeled files; `--privileged` or
 `label=disable` hid it. Fix: `context=system_u:object_r:container_ro_file_t:s0` on the mount.
 Dynamically linked x86 programs outside containers still need x86 libraries in the guest.
+
+## X11 apps and FEX (2026-10-15)
+
+- **X11:** sommelier runs Xwayland. `guest/sommelier-x11.patch` makes its X11 windows usable
+  outside ChromeOS: the app id goes out as `xdg_toplevel.set_app_id` (it only used aura-shell)
+  and title bars come from the host via xdg-decoration (server-side unless the window's Motif
+  hints say no title). `x11-run [--id ID] app` gives an X11 app its own Xwayland, so it's its
+  own macOS app; `sommelier-x.service` is a shared `DISPLAY=:0` for X11 apps started any other
+  way (they share one Dock tile). Our Smithay patch accepts sommelier's first X11 buffer before
+  the initial configure ack (Smithay raised a protocol error). Verified: xterm and xeyes as
+  separate macOS apps with native title bars.
+- **32-bit x86:** Rosetta can't run it, so FEX (Fedora's `fex-emu` + x86 rootfs) handles i386;
+  Rosetta keeps x86-64; QEMU keeps the rest. Package installs restart `systemd-binfmt`, which
+  unregisters *every* handler (FEX's own install wiped Rosetta), so `vzgpu-rosetta.service` is
+  `PartOf=systemd-binfmt.service`; empty `/etc/binfmt.d` overrides keep QEMU and FEX off x86-64
+  and QEMU off i386. Verified: static i386 busybox under FEX (0.50 s loop vs Rosetta 0.33 s,
+  QEMU 2.58 s); the handler set survives `systemctl try-restart systemd-binfmt`.
+- Open: i386 *containers* fail (`exec … No such file or directory`): FEX resolves the
+  container's dynamic loader inside Fedora's x86 rootfs instead of the image.

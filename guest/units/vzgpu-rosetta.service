@@ -1,12 +1,14 @@
-# Run x86-64 Linux binaries with Rosetta instead of QEMU. Registered here, after the share is
-# mounted, not via binfmt.d: the F flag opens the interpreter at registration, which
-# systemd-binfmt does too early in boot. QEMU's x86-64 entry is removed (and kept from
-# registering at boot by the empty /etc/binfmt.d/qemu-x86_64-static.conf); QEMU still
-# handles the other architectures.
+# Run x86-64 Linux binaries with Rosetta (32-bit x86 goes to FEX, which Rosetta can't do).
+# Registered here, after the share is mounted, not via binfmt.d: the F flag opens the
+# interpreter at registration, which systemd-binfmt does too early in boot. QEMU's and FEX's
+# x86-64 entries are removed (and kept from registering at boot by empty /etc/binfmt.d
+# overrides). PartOf: package installs restart systemd-binfmt, which unregisters every
+# handler; this unit then restarts with it and registers Rosetta again.
 [Unit]
 Description=Rosetta as the x86-64 binary handler
 Requires=mnt-rosetta.mount
 After=mnt-rosetta.mount systemd-binfmt.service
+PartOf=systemd-binfmt.service
 ConditionPathExists=/mnt/rosetta/rosetta
 
 [Service]
@@ -15,7 +17,7 @@ RemainAfterExit=yes
 ExecStart=/bin/sh -c '\
   b=/proc/sys/fs/binfmt_misc; \
   mountpoint -q $b || mount -t binfmt_misc binfmt_misc $b; \
-  [ -e $b/qemu-x86_64 ] && echo -1 > $b/qemu-x86_64; \
+  for e in qemu-x86_64 FEX-x86_64; do [ -e $b/$e ] && echo -1 > $b/$e; done; \
   [ -e $b/rosetta ] && echo -1 > $b/rosetta; \
   echo ":rosetta:M::\\x7fELF\\x02\\x01\\x01\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x02\\x00\\x3e\\x00:\\xff\\xff\\xff\\xff\\xff\\xfe\\xfe\\x00\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xfe\\xff\\xff\\xff:/mnt/rosetta/rosetta:CF" > $b/register'
 ExecStop=/bin/sh -c 'echo -1 > /proc/sys/fs/binfmt_misc/rosetta || true'

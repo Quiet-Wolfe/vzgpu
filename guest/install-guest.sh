@@ -16,8 +16,12 @@ install -m 755 "$HERE/payload/sommelier" "$HERE/wl-run" "$HERE/x11-run" "$HERE/v
 install -m 644 "$HERE/units/mnt-vzgpu.mount" "$HERE/units/vz-export-apps.service" \
     "$HERE/units/vz-export-apps.path" "$HERE/units/mnt-rosetta.mount" \
     "$HERE/units/vzgpu-rosetta.service" /etc/systemd/system/
-# Rosetta, not QEMU, runs x86-64 binaries (vzgpu-rosetta.service registers it after the mount).
-mkdir -p /etc/binfmt.d && : > /etc/binfmt.d/qemu-x86_64-static.conf
+# x86 on ARM: Rosetta runs x86-64 (vzgpu-rosetta.service registers it after the mount), FEX
+# runs 32-bit x86 (Rosetta can't), QEMU keeps the other architectures. Empty overrides stop
+# QEMU and FEX from claiming those at boot.
+dnf install -y -q fex-emu fex-emu-rootfs-fedora fex-emu-thunks
+mkdir -p /etc/binfmt.d
+for f in qemu-x86_64-static FEX-x86_64 qemu-i386-static qemu-i486-static; do : > /etc/binfmt.d/$f.conf; done
 install -m 644 "$HERE/units/sommelier.service" "$HERE/units/sommelier-x.service" /etc/systemd/user/
 install -D -m 644 "$HERE/units/50-vzgpu.conf" /etc/environment.d/50-vzgpu.conf
 install -m 644 "$HERE/units/vzgpu.sh" /etc/profile.d/vzgpu.sh
@@ -55,6 +59,7 @@ fi
 
 systemctl daemon-reload
 systemctl enable --now mnt-vzgpu.mount vz-export-apps.path
+systemctl restart systemd-binfmt.service  # apply the overrides now (FEX's own install restarted it too)
 systemctl enable --now mnt-rosetta.mount vzgpu-rosetta.service || echo "vzgpu: Rosetta not available" >&2
 systemctl start vz-export-apps.service || true
 systemctl --global enable sommelier.service sommelier-x.service
