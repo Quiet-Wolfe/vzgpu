@@ -1,9 +1,12 @@
 // vzgpu-tool — the bits of `vzgpu install` macOS has no command for.
 //   vzgpu-tool unxz <in.xz> <out>      decompress .xz (Apple Compression framework, LZMA)
+//   vzgpu-tool icns <icon.svg|png> <out.icns>   app icon for a launcher bundle, on Apple's grid
 //   vzgpu-tool rootpart <disk.img>     print "<PARTUUID> <index>" of the root partition: the
 //                                      largest partition that is not EFI/BIOS-boot/swap
-// Build: xcrun clang -O2 -fobjc-arc -framework Foundation -lcompression -o vzgpu-tool vzgpu-tool.m
-#import <Foundation/Foundation.h>
+// Build: xcrun clang -O2 -fobjc-arc -framework Foundation -framework AppKit -framework ImageIO -lcompression -o vzgpu-tool vzgpu-tool.m
+#import <AppKit/AppKit.h>
+#import <ImageIO/ImageIO.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #include <compression.h>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -113,11 +116,36 @@ static int rootpart(const char *path) {
     return 0;
 }
 
+static int icns(const char *in, const char *out) {
+    NSImage *src = [[NSImage alloc] initWithContentsOfFile:@(in)];
+    if (!src.isValid) { fprintf(stderr, "icns: can't read %s\n", in); return 1; }
+    CGImageDestinationRef dst = CGImageDestinationCreateWithURL(
+        (__bridge CFURLRef)[NSURL fileURLWithPath:@(out)], (__bridge CFStringRef)UTTypeICNS.identifier, 6, NULL);
+    for (int px = 16; px <= 1024; px *= 2) {
+        if (px == 32 || px == 64) continue;  // ICNS sizes: 16 32(@2x of 16) 128 256 512 1024
+        NSBitmapImageRep *rep = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL pixelsWide:px pixelsHigh:px
+            bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSDeviceRGBColorSpace
+            bytesPerRow:0 bitsPerPixel:0];
+        [NSGraphicsContext saveGraphicsState];
+        NSGraphicsContext.currentContext = [NSGraphicsContext graphicsContextWithBitmapImageRep:rep];
+        // Linux icons fill their canvas; macOS icons use the inner 824 of 1024 (as vzcomp's Dock icon).
+        CGFloat m = px * 100.0 / 1024;
+        [src drawInRect:NSMakeRect(m, m, px - 2 * m, px - 2 * m) fromRect:NSZeroRect
+              operation:NSCompositingOperationSourceOver fraction:1];
+        [NSGraphicsContext restoreGraphicsState];
+        CGImageDestinationAddImage(dst, rep.CGImage, NULL);
+    }
+    BOOL ok = CGImageDestinationFinalize(dst);
+    CFRelease(dst);
+    return ok ? 0 : 1;
+}
+
 int main(int argc, char **argv) {
     @autoreleasepool {
         if (argc == 4 && !strcmp(argv[1], "unxz")) return unxz(argv[2], argv[3]);
         if (argc == 3 && !strcmp(argv[1], "rootpart")) return rootpart(argv[2]);
-        fprintf(stderr, "usage: vzgpu-tool unxz <in.xz> <out> | rootpart <disk.img>\n");
+        if (argc == 4 && !strcmp(argv[1], "icns")) return icns(argv[2], argv[3]);
+        fprintf(stderr, "usage: vzgpu-tool unxz <in.xz> <out> | rootpart <disk.img> | icns <icon> <out.icns>\n");
         return 2;
     }
 }

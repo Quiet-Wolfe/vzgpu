@@ -6,6 +6,9 @@ After=mnt-vzgpu.mount
 [Service]
 Type=oneshot
 Environment=VZ_SHARE=/mnt/vzgpu
+# Let a package transaction finish writing its files first (a path trigger fires on the
+# first change, and changes during the run would otherwise be missed).
+ExecStartPre=/bin/sleep 2
 ExecStart=/usr/local/bin/vz-export-apps
 
 [Install]

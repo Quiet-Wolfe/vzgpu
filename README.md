@@ -207,3 +207,22 @@ sommelier didn't support `wp_cursor_shape_v1`, so GTK drew its Adwaita cursors a
 names to NSCursor (macOS 15 frame-resize/column/row/zoom cursors included). Apps that set
 their own cursor image keep it. Verified by Jayden: native arrow, I-beam and resize cursors
 over GNOME Calculator. `guest/build-sommelier.sh` rebuilds `guest/payload/sommelier`.
+
+## Launchers in /Applications/<distro>/ (2026-10-15)
+
+Every app a menu would show (no `NoDisplay`/`Hidden`/`Terminal` entries) gets
+`/Applications/Fedora/<Name>.app`, so Spotlight, Launchpad and Finder can start it.
+- Guest: `vz-export-apps` also writes `apps/<id>/desktop` (the .desktop path), prunes
+  uninstalled apps and touches `apps/.stamp`. Its path unit waits 2 s before exporting: the
+  first file a dnf transaction writes fires the trigger, and the .desktop file used to land
+  after the (millisecond) export had finished.
+- Mac: LaunchAgent `dev.vzgpu.sync-apps` watches `share/apps` and runs `vzgpu sync-apps`:
+  Info.plist, `.icns` (`vzgpu-tool icns`, Apple's 1024 grid), a background-only stub that
+  runs `vzgpu launch <id>` (= `gio launch <desktop file>` in the guest, which parses `Exec=`).
+  Only bundles with our `Contents/Resources/vzgpu-id` marker are replaced or removed.
+- Verified: `open` on Calculator.app and Text Editor.app starts them (booting the guest if
+  needed); `dnf install/remove gnome-text-editor` adds/removes its launcher within seconds;
+  Spotlight indexes both.
+- Known: a launcher pinned in the Dock shows next to the running app's own tile (the window
+  belongs to a vzcomp process). Fix later: hand the Wayland connection to the launcher.
+- One guest at a time: `share/apps` is shared, not per distro.

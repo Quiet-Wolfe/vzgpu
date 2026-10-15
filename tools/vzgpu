@@ -4,6 +4,7 @@
 #   vzgpu install [-D Fedora]   download a stock cloud image and set it up (one command)
 #   vzgpu run <cmd...>          run a Linux app; it opens as a macOS app (starts things as needed)
 #   vzgpu shell                 interactive shell in the guest, as you
+#   vzgpu sync-apps             refresh the launchers in /Applications/<distro>/ (automatic)
 #   vzgpu stop                  shut the guest down
 #   vzgpu list                  installed distros
 #
@@ -42,6 +43,7 @@ gssh() {
 }
 
 ensure_vzcomp() {
+    ensure_sync_agent
     pgrep -f 'MacOS/vzcomp$' >/dev/null && return
     local plist=$HOME/Library/LaunchAgents/dev.vzgpu.vzcomp.plist
     mkdir -p "$(dirname "$plist")"
@@ -130,6 +132,97 @@ cmd_run() {
     gssh "$d" "$(id -un)" "nohup $(printf '%q ' "$@") >/dev/null 2>&1 &"
 }
 
+LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+
+xml_escape() { printf '%s' "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'; }
+
+# /Applications/<distro>/<Name>.app for every app the guest exports (guest/vz-export-apps).
+# Each launcher is a background-only stub that runs `vzgpu launch <desktop-id>` and exits; the
+# app itself appears as its own macOS app (vzcomp). Only bundles carrying our marker file are
+# ever replaced or removed.
+cmd_sync_apps() {
+    local d; d=$(default_distro)
+    local apps="$ROOT/share/apps" dest="/Applications/$d"
+    mkdir -p "$dest"
+    local keep=" " src
+    for src in "$apps"/*/; do
+        [ -f "$src/desktop" ] || continue
+        local id name app icon iconkey bid
+        id=$(basename "$src")
+        name=$(head -n1 "$src/name" | tr '/:' '--')
+        app="$dest/$name.app"
+        keep="$keep$name.app "
+        if [ -f "$app/Contents/Resources/vzgpu-id" ] && [ "$app/Contents/Info.plist" -nt "$src/desktop" ]; then
+            continue  # up to date
+        fi
+        if [ -e "$app" ] && [ ! -f "$app/Contents/Resources/vzgpu-id" ]; then
+            echo "vzgpu: not replacing $app (not ours)" >&2
+            continue
+        fi
+        rm -rf "$app"
+        mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+        echo "$id" > "$app/Contents/Resources/vzgpu-id"
+        icon=$(ls "$src"icon.* 2>/dev/null | head -1)
+        iconkey=""
+        if [ -n "$icon" ] && "$TOOL" icns "$icon" "$app/Contents/Resources/AppIcon.icns"; then
+            iconkey="<key>CFBundleIconFile</key><string>AppIcon</string>"
+        fi
+        bid="dev.vzgpu.$d.$(printf '%s' "$id" | tr -c 'A-Za-z0-9.' '-')"
+        {
+            echo '<?xml version="1.0" encoding="UTF-8"?>'
+            echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
+            echo '<plist version="1.0"><dict>'
+            echo "  <key>CFBundleName</key><string>$(xml_escape "$name")</string>"
+            echo "  <key>CFBundleDisplayName</key><string>$(xml_escape "$name")</string>"
+            echo "  <key>CFBundleIdentifier</key><string>$bid</string>"
+            echo "  <key>CFBundleExecutable</key><string>launch</string>"
+            echo "  <key>CFBundlePackageType</key><string>APPL</string>"
+            echo "  <key>CFBundleVersion</key><string>1</string>"
+            echo "  <key>LSBackgroundOnly</key><true/>"
+            echo "  $iconkey"
+            echo '</dict></plist>'
+        } > "$app/Contents/Info.plist"
+        printf '#!/bin/sh\n# %s on %s (vzgpu launcher)\nexec "%s" launch "%s"\n' \
+            "$name" "$d" "$REPO/tools/vzgpu" "$id" > "$app/Contents/MacOS/launch"
+        chmod 755 "$app/Contents/MacOS/launch"
+        "$LSREGISTER" -f "$app" 2>/dev/null || true
+    done
+    local a
+    for a in "$dest"/*.app; do
+        [ -f "$a/Contents/Resources/vzgpu-id" ] || continue
+        case "$keep" in
+            *" $(basename "$a") "*) ;;
+            *) "$LSREGISTER" -u "$a" 2>/dev/null || true; rm -rf "$a" ;;
+        esac
+    done
+}
+
+cmd_launch() {
+    local id=${1:?usage: vzgpu launch <desktop-id>}
+    local desktop
+    desktop=$(cat "$ROOT/share/apps/$id/desktop" 2>/dev/null) || die "unknown app $id"
+    # gio interprets the .desktop Exec= line (field codes, quoting) the way a Linux menu would.
+    cmd_run gio launch "$desktop"
+}
+
+ensure_sync_agent() {
+    local plist=$HOME/Library/LaunchAgents/dev.vzgpu.sync-apps.plist
+    [ -f "$plist" ] && return
+    mkdir -p "$ROOT/share/apps" "$(dirname "$plist")"
+    {
+        echo '<?xml version="1.0" encoding="UTF-8"?>'
+        echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
+        echo '<plist version="1.0"><dict>'
+        echo '  <key>Label</key><string>dev.vzgpu.sync-apps</string>'
+        echo "  <key>ProgramArguments</key><array><string>$REPO/tools/vzgpu</string><string>sync-apps</string></array>"
+        echo "  <key>WatchPaths</key><array><string>$ROOT/share/apps</string></array>"
+        echo '  <key>RunAtLoad</key><true/>'
+        echo "  <key>StandardErrorPath</key><string>$ROOT/sync-apps.log</string>"
+        echo '</dict></plist>'
+    } > "$plist"
+    launchctl bootstrap gui/$(id -u) "$plist"
+}
+
 cmd_shell() {
     local d; d=$(default_distro); ensure_vm "$d"
     ssh -i "$ROOT/distros/$d/ssh/id_ed25519" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
@@ -156,8 +249,10 @@ cmd_list() {
 case "${1:-}" in
     install) shift; cmd_install "$@" ;;
     run) shift; cmd_run "$@" ;;
+    launch) shift; cmd_launch "$@" ;;
+    sync-apps) cmd_sync_apps ;;
     shell) shift; cmd_shell "$@" ;;
     stop) cmd_stop ;;
     list|-l) cmd_list ;;
-    *) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+    *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

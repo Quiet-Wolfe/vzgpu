@@ -1,6 +1,9 @@
 #!/bin/sh
-# vz-export-apps — publish installed apps' names and icons to the Mac (vzcomp Dock icons).
-# Writes <share>/apps/<desktop-id>/{name,icon.svg|icon.png} for every .desktop file.
+# vz-export-apps — publish installed apps to the Mac: Dock icons (vzcomp) and the launchers in
+# /Applications/<distro>/ (vzgpu sync-apps). For every launchable .desktop file writes
+#   <share>/apps/<desktop-id>/{name, desktop, icon.svg|icon.png}
+# (desktop = the .desktop file's guest path, launched with `gio launch`), removes apps that are
+# gone, and touches <share>/apps/.stamp so the Mac's watcher fires.
 # The share is the VMM's virtiofs tag "vzgpu" (~/Library/Application Support/vzgpu/share).
 SHARE=${VZ_SHARE:-/mnt/vzgpu}
 mkdir -p "$SHARE"
@@ -21,18 +24,34 @@ find_icon() {  # $1 = Icon= value
     done
 }
 
+entry() {  # $1 = key, $2 = .desktop file: value in the [Desktop Entry] group
+    sed -n '/^\[Desktop Entry\]/,/^\[/{s/^'"$1"'=//p}' "$2" | head -n1
+}
+
+keep=" "
 for desktop in /usr/share/applications/*.desktop /usr/local/share/applications/*.desktop; do
     [ -f "$desktop" ] || continue
+    # Only what a menu would show: no hidden entries, no terminal programs.
+    [ "$(entry NoDisplay "$desktop")" = true ] && continue
+    [ "$(entry Hidden "$desktop")" = true ] && continue
+    [ "$(entry Terminal "$desktop")" = true ] && continue
+    [ "$(entry Type "$desktop")" = Application ] || continue
     id=$(basename "$desktop" .desktop)
+    keep="$keep$id "
     dir="$SHARE/apps/$id"
-    [ "$dir/name" -nt "$desktop" ] && continue  # already exported and unchanged
-    name=$(sed -n '/^\[Desktop Entry\]/,/^\[/{s/^Name=//p}' "$desktop" | head -n1)
-    icon=$(sed -n '/^\[Desktop Entry\]/,/^\[/{s/^Icon=//p}' "$desktop" | head -n1)
+    [ "$dir/desktop" -nt "$desktop" ] && continue  # already exported and unchanged
     mkdir -p "$dir"
     rm -f "$dir/icon.svg" "$dir/icon.png"
-    file=$(find_icon "$icon")
-    if [ -n "$file" ]; then
-        cp "$file" "$dir/icon.${file##*.}"
-    fi
+    file=$(find_icon "$(entry Icon "$desktop")")
+    [ -n "$file" ] && cp "$file" "$dir/icon.${file##*.}"
+    name=$(entry Name "$desktop")
     printf '%s\n' "${name:-$id}" > "$dir/name"
+    printf '%s\n' "$desktop" > "$dir/desktop"
 done
+
+# Apps that were uninstalled (or became hidden) disappear from the Mac too.
+for dir in "$SHARE"/apps/*/; do
+    id=$(basename "$dir")
+    case "$keep" in *" $id "*) ;; *) rm -rf "$dir" ;; esac
+done
+touch "$SHARE/apps/.stamp"
