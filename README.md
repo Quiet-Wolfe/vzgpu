@@ -261,8 +261,9 @@ manifest, xkb data, the guest package. The script fails if any library path stil
 Homebrew, the Vulkan SDK or the checkout. Run as `/Applications/vzgpu.app/Contents/MacOS/vzgpu`.
 
 Kernel: not bundled; `install` downloads `Image.xz` (14.7 MB, SHA-256 pinned in the CLI) from
-the GitHub release `kernel-7.2.11-vzgpu` (Quiet-Wolfe/vzgpu; not published yet: override with
-`VZGPU_KERNEL_URL`, or `VZGPU_KERNEL_IMAGE` for a local build).
+the GitHub release [`kernel-7.2.11-vzgpu`](https://github.com/Quiet-Wolfe/vzgpu/releases/tag/kernel-7.2.11-vzgpu)
+(published 2026-10-15; anonymous download verified against the pinned SHA-256). Override with
+`VZGPU_KERNEL_URL`, or `VZGPU_KERNEL_IMAGE` for a local build.
 
 Verified 2026-10-15: fresh `install -D Fedora` from /Applications/vzgpu.app (2 min with the
 image cached); the broker, VMM and a launcher load only the bundle's libraries (lsof), and
