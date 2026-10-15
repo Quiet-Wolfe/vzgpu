@@ -93,9 +93,10 @@ vmlinuz, zstd-decompressed), `initramfs.img`, `disk.img` (APFS clone of
 (throwaway key for this VM).
 
 ```
-V=/opt/homebrew/opt/virglrenderer
-xcrun clang -fobjc-arc -O2 -Wall -I$V/include/virgl -L$V/lib -lvirglrenderer \
-    -framework Foundation -framework Virtualization -o build/vzgpu-venus vzgpu.m
+third_party/fetch-virglrenderer.sh   # krunkit virglrenderer + venus fence fix
+V=$PWD/third_party/virgl-prefix
+xcrun clang -fobjc-arc -O2 -Wall -I$V/include/virgl -L$V/lib -lvirglrenderer -Wl,-rpath,$V/lib \
+    -framework Foundation -framework Virtualization -o build/vzgpu-venus vzgpu.m crossdomain.m
 codesign -s - -f --entitlements vzgpu.entitlements build/vzgpu-venus
 build/vzgpu-venus ~/VMs/fedora45-vzgpu 2> ~/VMs/fedora45-vzgpu/run/vmm.log
 ```
@@ -108,3 +109,22 @@ build/vzgpu-venus ~/VMs/fedora45-vzgpu 2> ~/VMs/fedora45-vzgpu/run/vmm.log
 - Guest package installs while the VPN is up: `tools/gssh -R 18080 'dnf
   --setopt=proxy=socks5h://127.0.0.1:18080 …'` (needs guest `setenforce 0`; Fedora 45's
   policy denies sshd-session binding forward ports). Workaround, not a fix.
+
+## virglrenderer fence bugs (fixed in third_party/virglrenderer-venus-fence-race.patch)
+
+The krunkit virglrenderer 0.10.4e (Homebrew `libkrun/krun` tap) has two bugs in
+`src/venus_context.c`, found 2026-10-15:
+
+1. **Race → VMM abort.** Venus runs with `VKR_RENDERER_THREAD_SYNC|ASYNC_FENCE_CB`, so
+   fences retire on vkr's per-queue sync threads while `submit_fence` runs on the device
+   queue, and all the mutexes are commented out. The fence lists get corrupted and
+   `venus_context_destroy` frees a garbage pointer (`POINTER_BEING_FREED_WAS_NOT_ALLOCATED`)
+   whenever a Venus app exits — the "vkcube kill" crash, and the 13:33 crash during GTK tests.
+2. **Fences signalled early.** The retire callback compared the guest `fence_id` with a
+   private per-timeline seqno (0, 1, 2 …), so any completed fence retired *every* pending
+   fence on that ring. The guest was told GPU work was done before it was.
+   Suspected contributor to GTK's half-drawn first frames after resize (Vulkan renderer only).
+
+Fix: a per-context fence mutex (not held across `vkr_renderer_submit_fence`, since ring 0
+retires synchronously inside it), a lock on the context list, retire by `fence_id <=`
+reported id, and free pending timeline fences on destroy.

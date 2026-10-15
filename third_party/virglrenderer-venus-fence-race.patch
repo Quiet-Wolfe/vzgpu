@@ -1,0 +1,200 @@
+diff -ru virglrenderer-orig/src/venus_context.c virglrenderer-0.10.4e-krunkit/src/venus_context.c
+--- virglrenderer-orig/src/venus_context.c	2026-10-15 13:45:13
++++ virglrenderer-0.10.4e-krunkit/src/venus_context.c	2026-10-15 13:48:36
+@@ -16,6 +16,7 @@
+ };
+ 
+ struct list_head contexts;
++static pthread_mutex_t contexts_mutex = PTHREAD_MUTEX_INITIALIZER;
+ 
+ static inline void
+ venus_context_resource_add(struct venus_context *ctx, uint32_t res_id)
+@@ -161,14 +162,6 @@
+    return 0;
+ }
+ 
+-static bool
+-venus_fence_is_signaled(const struct venus_fence *fence, uint32_t cur_seqno)
+-{
+-   /* takes wrapping into account */
+-   const uint32_t d = cur_seqno - fence->seqno;
+-   return d < INT32_MAX;
+-}
+-
+ static struct venus_fence *
+ venus_context_alloc_fence(struct venus_context *ctx)
+ {
+@@ -209,18 +202,19 @@
+ #endif
+ 
+ static void
+-venus_context_retire_fences_internal(struct venus_context *ctx, uint32_t ring_idx, uint32_t seqno)
++venus_context_retire_fences_internal(struct venus_context *ctx, uint32_t ring_idx, uint64_t fence_id)
+ {
+    struct venus_timeline *timeline = &ctx->timelines[ring_idx];
+ 
+-   timeline->cur_seqno = seqno;
+-   //timeline->cur_seqno_stall_count = 0;
+-
+-   //fprintf(stderr, "%s: ring_idx=%d seqno=%d\n", __func__, ring_idx, seqno);
+-
++   /* vkr reports the guest fence_id it was given. Guest fence ids increase
++    * monotonically and each ring retires in order, so everything up to and
++    * including fence_id is done -- and nothing after it. (Comparing against
++    * our own small per-timeline seqnos retired every pending fence at once,
++    * signalling the guest before the GPU had finished.) */
++   pthread_mutex_lock(&ctx->fence_mutex);
+    list_for_each_entry_safe (struct venus_fence, fence, &timeline->fences, head) {
+-      if (!venus_fence_is_signaled(fence, timeline->cur_seqno))
+-         return;
++      if (fence->fence_id > fence_id)
++         break;
+ 
+       //fprintf(stderr, "%s: fence_retire ring_idx=%d seqno=%d\n", __func__, ring_idx, seqno);
+       ctx->base.fence_retire(&ctx->base, ring_idx, fence->fence_id);
+@@ -228,6 +222,7 @@
+       list_del(&fence->head);
+       venus_context_free_fence(ctx, fence);
+    }
++   pthread_mutex_unlock(&ctx->fence_mutex);
+ }
+ 
+ static void
+@@ -279,9 +274,12 @@
+       return -EINVAL;
+ 
+    struct venus_timeline *timeline = &ctx->timelines[ring_idx];
++   pthread_mutex_lock(&ctx->fence_mutex);
+    struct venus_fence *fence = venus_context_alloc_fence(ctx);
+-   if (!fence)
++   if (!fence) {
++      pthread_mutex_unlock(&ctx->fence_mutex);
+       return -ENOMEM;
++   }
+ 
+    fence->flags = flags;
+    fence->seqno = timeline->next_seqno++;
+@@ -292,6 +290,8 @@
+ 
+    list_addtail(&fence->head, &timeline->fences);
+    ctx->timeline_busy_mask |= 1ull << ring_idx;
++   /* unlocked before submitting: ring 0 retires synchronously in there */
++   pthread_mutex_unlock(&ctx->fence_mutex);
+ 
+    //if (venus_renderer.flags & VIRGL_RENDERER_ASYNC_FENCE_CB)
+    //   mtx_unlock(&ctx->timeline_mutex);
+@@ -303,6 +303,7 @@
+    //if (venus_renderer.flags & VIRGL_RENDERER_ASYNC_FENCE_CB)
+    //   mtx_lock(&ctx->timeline_mutex);
+ 
++   pthread_mutex_lock(&ctx->fence_mutex);
+    list_del(&fence->head);
+    ctx->timeline_busy_mask = old_busy_mask;
+ 
+@@ -310,6 +311,7 @@
+    //   mtx_unlock(&ctx->timeline_mutex);
+ 
+    venus_context_free_fence(ctx, fence);
++   pthread_mutex_unlock(&ctx->fence_mutex);
+    //fprintf(stderr, "%s: failed to submit fence\n", __func__);
+    return -1;
+ }
+@@ -320,12 +322,14 @@
+ {
+    struct venus_context *ctx = NULL;
+ 
++   pthread_mutex_lock(&contexts_mutex);
+    list_for_each_entry (struct venus_context, iter, &contexts, head) {
+       if (iter->base.ctx_id == ctx_id) {
+          ctx = iter;
+          break;
+       }
+    }
++   pthread_mutex_unlock(&contexts_mutex);
+ 
+    return ctx;
+ }
+@@ -333,13 +337,17 @@
+ static void
+ venus_add_context(struct venus_context *ctx)
+ {
++   pthread_mutex_lock(&contexts_mutex);
+    list_addtail(&ctx->head, &contexts);
++   pthread_mutex_unlock(&contexts_mutex);
+ }
+ 
+ static void
+ venus_remove_context(struct venus_context *ctx)
+ {
++   pthread_mutex_lock(&contexts_mutex);
+    list_del(&ctx->head);
++   pthread_mutex_unlock(&contexts_mutex);
+ }
+ 
+ static void
+@@ -347,10 +355,16 @@
+ {
+    struct venus_context *ctx = (struct venus_context *)base;
+ 
++   /* joins vkr's sync threads: no retire callbacks after this */
+    vkr_renderer_destroy_context(base->ctx_id);
+ 
++   for (uint32_t i = 0; i < ARRAY_SIZE(ctx->timelines); i++) {
++      list_for_each_entry_safe (struct venus_fence, fence, &ctx->timelines[i].fences, head)
++         free(fence);
++   }
+    list_for_each_entry_safe (struct venus_fence, fence, &ctx->free_fences, head)
+       free(fence);
++   pthread_mutex_destroy(&ctx->fence_mutex);
+    venus_context_resource_table_fini(ctx);
+ 
+    venus_remove_context(ctx);
+@@ -401,6 +415,7 @@
+       return NULL;
+    }
+ 
++   pthread_mutex_init(&ctx->fence_mutex, NULL);
+    venus_context_init_base(ctx);
+    venus_context_resource_table_init(ctx);
+    venus_context_init_timelines(ctx);
+@@ -424,8 +439,9 @@
+    struct venus_context *ctx = venus_lookup_context(ctx_id);
+    assert(ctx);
+ 
+-   const uint32_t seqno = (uint32_t)fence_id;
+-   venus_context_retire_fences_internal(ctx, ring_idx, seqno);
++   if (!ctx)
++      return;
++   venus_context_retire_fences_internal(ctx, ring_idx, fence_id);
+ }
+ 
+ static const struct vkr_renderer_callbacks venus_state_cbs = {
+diff -ru virglrenderer-orig/src/venus_context.h virglrenderer-0.10.4e-krunkit/src/venus_context.h
+--- virglrenderer-orig/src/venus_context.h	2026-10-15 13:45:13
++++ virglrenderer-0.10.4e-krunkit/src/venus_context.h	2026-10-15 13:45:13
+@@ -6,6 +6,7 @@
+ #include <inttypes.h>
+ #include <stdatomic.h>
+ #include <stdbool.h>
++#include <pthread.h>
+ 
+ #include "util/hash_table.h"
+ #include "util/list.h"
+@@ -33,14 +34,15 @@
+    /* this tracks resources early attached in get_blob */
+    struct hash_table *resource_table;
+ 
+-   //mtx_t timeline_mutex;
++   /* guards timelines[].fences and free_fences: fences are submitted on the
++    * device thread and retired on vkr's per-queue sync threads */
++   pthread_mutex_t fence_mutex;
+    struct venus_timeline timelines[VENUS_CONTEXT_TIMELINE_COUNT];
+    /* which timelines have fences */
+    uint64_t timeline_busy_mask;
+    /* this points a region of shmem updated by the render worker */
+    const volatile atomic_uint *timeline_seqnos;
+ 
+-   //mtx_t free_fences_mutex;
+    struct list_head free_fences;
+ };
+ 
