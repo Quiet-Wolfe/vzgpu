@@ -164,5 +164,8 @@ reported id, and free pending timeline fences on destroy.
   configure (the notched display below the camera housing) in its own Space. macOS 14+
   cooperative activation means the user is not switched to that Space when the app was
   launched from elsewhere; it shows up as a Dock tile / Mission Control Space.
-- Open: apps with no `.desktop` file show the generic blank icon instead of the
-  letter placeholder; the runtime fullscreen toggle (`f` in weston-fullscreen) is untested.
+- Runtime toggle verified by hand (weston-fullscreen `f`): one Space transition per press.
+  A key-up swallowed by the Space animation used to leave the client auto-repeating `f`
+  (fullscreen loop); held keys are now released on resign-key and fullscreen transitions.
+- Open: apps with no `.desktop` file show the generic blank icon instead of the letter
+  placeholder (the drawingHandler image isn't picked up by the Dock).
