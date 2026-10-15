@@ -14,3 +14,8 @@ export PATH=/opt/homebrew/bin:$PATH PKG_CONFIG_PATH=/opt/homebrew/lib/pkgconfig
 cd $T
 [ -d build ] || meson setup build -Dvenus=true -Drender-server=false --buildtype=release --prefix="$PWD/../virgl-prefix"
 ninja -C build install
+# meson links MoltenVK directly (-lMoltenVK); go through the Vulkan loader instead so
+# VK_DRIVER_FILES can pick the host ICD (KosmicKrisp, MoltenVK, ...).
+SDK=${VULKAN_SDK:-$(ls -d "$HOME"/VulkanSDK/*/macOS | sort -V | tail -1)}
+install_name_tool -change @rpath/libMoltenVK.dylib "$SDK/lib/libvulkan.1.dylib" ../virgl-prefix/lib/libvirglrenderer.1.dylib
+codesign -s - -f ../virgl-prefix/lib/libvirglrenderer.1.dylib
