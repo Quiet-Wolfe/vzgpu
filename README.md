@@ -199,3 +199,11 @@ image: no Homebrew, no cloud-init, no edits to the image before boot.
   (`dev.vzgpu.vzcomp`). `install` resumes after unpacking if the first boot fails.
 - Not yet: other distros, more than one guest at a time (fixed MAC), packaging the
   binaries (the CLI uses this checkout's `build/`), a downloadable kernel release.
+
+## Native cursors (2026-10-15)
+
+sommelier didn't support `wp_cursor_shape_v1`, so GTK drew its Adwaita cursors as images.
+`guest/sommelier-cursor-shape.patch` passes the protocol through; vzcomp maps the CSS cursor
+names to NSCursor (macOS 15 frame-resize/column/row/zoom cursors included). Apps that set
+their own cursor image keep it. Verified by Jayden: native arrow, I-beam and resize cursors
+over GNOME Calculator. `guest/build-sommelier.sh` rebuilds `guest/payload/sommelier`.
